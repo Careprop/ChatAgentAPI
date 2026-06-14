@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from app.db.base import Base
-from app.db.models.chat import Chat  # важно
+from app.db.models.chat import Chat  # noqa: F401
+from app.db.models.message import Message  # noqa: F401
+from app.db.models.message_embedding import MessageEmbedding  # noqa: F401
 
 from app.config.settings import settings
 
