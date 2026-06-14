@@ -23,9 +23,16 @@ class Agent:
         messages: Sequence[AgentMessage],
         *,
         temperature: float | None = None,
+        open_chains_context: str | None = None,
+        memory_context: str | None = None,
     ) -> AgentResponse:
+        instructions = self._instructions
+        if open_chains_context:
+            instructions = f"{instructions}\n\n{open_chains_context}"
+        if memory_context:
+            instructions = f"{instructions}\n\n{memory_context}"
         return await self._backend.generate(
             messages,
-            instructions=self._instructions,
+            instructions=instructions,
             temperature=temperature,
         )

@@ -1,5 +1,7 @@
 import logging
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -13,10 +15,19 @@ from app.agent.exceptions import (
 )
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.message import router as message_router
+from app.worker.embedding import start_worker
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    worker_task = start_worker()
+    yield
+    worker_task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(chat_router)
 app.include_router(message_router)
@@ -54,6 +65,5 @@ async def _handle_agent_provider_error(request: Request, exc: AgentProviderError
 
 @app.exception_handler(AgentError)
 async def _handle_agent_error(request: Request, exc: AgentError) -> JSONResponse:
-    # Catch-all for any AgentError subclass not handled above.
     logger.error("Unexpected agent error: %s", exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal agent error"})

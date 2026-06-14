@@ -13,10 +13,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
 
-    # How many recent messages always included in context
-    context_recency_limit: int = 6
-    # How many semantically relevant messages added on top (when embeddings available)
+    # How many semantically relevant messages added to context
     context_semantic_limit: int = 4
+
+    # Seconds of silence after which a participant's chain is auto-closed
+    chain_gap_seconds: int = 5
+
+    # Embedding worker
+    embedding_worker_poll_interval: float = 2.0
+    embedding_job_max_attempts: int = 3
 
     api_key: str
 

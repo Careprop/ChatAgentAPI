@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.db.mixins.timestamps import TimestampMixin
 
 if TYPE_CHECKING:
+    from app.db.models.chain import MessageChain
     from app.db.models.message_embedding import MessageEmbedding
 
 
@@ -30,12 +31,27 @@ class Message(Base, TimestampMixin):
         index=True,
     )
 
+    chain_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("message_chains.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    participant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     role: Mapped[str] = mapped_column(Text, nullable=False)
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Monotonically increasing position within the chat, assigned at insert time.
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    chain: Mapped[MessageChain | None] = relationship(
+        "MessageChain",
+        back_populates="messages",
+        lazy="raise",
+    )
 
     embedding: Mapped[MessageEmbedding | None] = relationship(
         "MessageEmbedding",
