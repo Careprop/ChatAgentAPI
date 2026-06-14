@@ -2,10 +2,16 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    openai_api_key: str
+    openai_api_key: str = ""
     openai_model: str = "gpt-5.4-mini"
     openai_embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+
+    # Embedding backend: "sentence_transformers" | "openai"
+    embedding_backend: str = "sentence_transformers"
+    # sentence-transformers model name (used when embedding_backend = "sentence_transformers")
+    st_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    # Must match the chosen model's output size; migration required when changing
+    embedding_dimensions: int = 384
 
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"

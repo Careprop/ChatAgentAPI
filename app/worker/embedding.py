@@ -1,7 +1,6 @@
 import asyncio
 import logging
 
-from app.agent.embedding.backends.openai import OpenAIEmbeddingBackend
 from app.agent.embedding.base import should_embed
 from app.agent.embedding.stores.pgvector import PgvectorStore
 from app.config.settings import settings
@@ -13,13 +12,18 @@ from app.repositories.message import MessageRepository
 
 logger = logging.getLogger(__name__)
 
-_embedding_backend: OpenAIEmbeddingBackend | None = None
+_embedding_backend = None
+_backend_init_attempted = False
 
 
-def _get_backend() -> OpenAIEmbeddingBackend:
-    global _embedding_backend
-    if _embedding_backend is None:
-        _embedding_backend = OpenAIEmbeddingBackend()
+def _get_backend():
+    global _embedding_backend, _backend_init_attempted
+    if not _backend_init_attempted:
+        _backend_init_attempted = True
+        from app.agent.embedding.factory import create_embedding_backend
+        _embedding_backend = create_embedding_backend()
+        if _embedding_backend is None:
+            logger.warning("No embedding backend configured — worker will skip jobs")
     return _embedding_backend
 
 
@@ -29,6 +33,8 @@ async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
         return
 
     backend = _get_backend()
+    if backend is None:
+        return
     job_repo = EmbeddingJobRepository(session)
     message_repo = MessageRepository(session)
     chain_repo = ChainRepository(session)
@@ -53,7 +59,7 @@ async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
 
             if should_embed("user", text):
                 vectors = await backend.embed([text])
-                await store.upsert(target_id, vectors[0], backend._model)
+                await store.upsert(target_id, vectors[0], backend.model_name)
 
             if job.chain_id is not None:
                 await chain_repo.mark_embedded(job.chain_id)
@@ -94,7 +100,7 @@ async def _close_abandoned_chains(session) -> None:
     for chain in abandoned:
         await chain_repo.close(chain.id)
         await job_repo.create_for_chain(chain.id)
-        logger.debug("Auto-closed abandoned chain %d (participant=%s)", chain.id, chain.participant_id)
+        logger.debug("Auto-closed abandoned chain %d (user_id=%s)", chain.id, chain.user_id)
 
     await session.commit()
     logger.info("Closed %d abandoned chain(s)", len(abandoned))

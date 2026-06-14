@@ -16,10 +16,12 @@ from app.api.v1.schemas.message import AddMemoryRequest, MessageResponse, SendMe
 from app.config.settings import settings
 from app.db.models.chain import MessageChain
 from app.db.models.message import Message
+from app.db.models.user import User
 from app.repositories.chain import ChainRepository
 from app.repositories.chat import ChatRepository
 from app.repositories.embedding_job import EmbeddingJobRepository
 from app.repositories.message import MessageRepository
+from app.repositories.user import UserRepository
 from app.worker.embedding import flush_pending_for_chat
 
 router = APIRouter(
@@ -31,6 +33,10 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 # Context formatting helpers
 # ---------------------------------------------------------------------------
+
+def _label(user: User | None, role: str) -> str:
+    return user.username if user else role
+
 
 def _format_open_chains_block(
     chains: list[MessageChain], current_chain_id: int | None
@@ -45,7 +51,7 @@ def _format_open_chains_block(
         "",
     ]
     for chain in other:
-        label = chain.participant_id or "unknown"
+        label = chain.user.username if chain.user else "unknown"
         for msg in chain.messages:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M UTC")
             lines.append(f"[{ts}] {label}: {msg.content}")
@@ -70,7 +76,7 @@ def _format_memory_block(
         ]
         for m in sorted(same_chat, key=lambda msg: msg.sequence):
             ts = m.created_at.strftime("%Y-%m-%d %H:%M UTC")
-            lines.append(f"[{ts}] {m.participant_id or m.role}: {m.content}")
+            lines.append(f"[{ts}] {_label(m.user, m.role)}: {m.content}")
 
     if cross_chat:
         if lines:
@@ -83,7 +89,7 @@ def _format_memory_block(
         ]
         for m in sorted(cross_chat, key=lambda msg: msg.created_at):
             ts = m.created_at.strftime("%Y-%m-%d %H:%M UTC")
-            lines.append(f"[{ts}] {m.participant_id or m.role}: {m.content}")
+            lines.append(f"[{ts}] {_label(m.user, m.role)}: {m.content}")
 
     return "\n".join(lines)
 
@@ -94,17 +100,17 @@ def _format_memory_block(
 
 async def _resolve_chain(
     chat_id: int,
-    participant_id: str | None,
+    user: User | None,
     message_repo: MessageRepository,
     chain_repo: ChainRepository,
     job_repo: EmbeddingJobRepository,
 ) -> MessageChain | None:
-    """Return the active chain for this participant, closing the old one if a gap occurred."""
-    if not participant_id:
+    """Return the active chain for this user, closing the old one if a gap occurred."""
+    if not user:
         return None
 
-    last_msg = await message_repo.get_last_by_participant(chat_id, participant_id)
-    open_chain = await chain_repo.get_open_chain(chat_id, participant_id)
+    last_msg = await message_repo.get_last_by_user(chat_id, user.id)
+    open_chain = await chain_repo.get_open_chain(chat_id, user.id)
 
     if last_msg and open_chain:
         gap = (datetime.now(timezone.utc) - last_msg.created_at).total_seconds()
@@ -114,7 +120,7 @@ async def _resolve_chain(
             open_chain = None
 
     if open_chain is None:
-        open_chain = await chain_repo.create(chat_id, participant_id)
+        open_chain = await chain_repo.create(chat_id, user.id)
 
     return open_chain
 
@@ -167,7 +173,7 @@ async def send_message(
     chat_external_id: uuid.UUID,
     payload: SendMessageRequest,
     db: AsyncSession = Depends(get_db),
-    embedding_backend: OpenAIEmbeddingBackend = Depends(get_embedding_backend),
+    embedding_backend: OpenAIEmbeddingBackend | None = Depends(get_embedding_backend),
     _: None = Depends(verify_api_key),
 ):
     chat_repo = ChatRepository(db)
@@ -180,13 +186,20 @@ async def send_message(
     job_repo = EmbeddingJobRepository(db)
     embedding_store = get_embedding_store(db)
 
+    # --- Resolve user ---
+    user: User | None = None
+    if payload.user_id is not None:
+        user = await UserRepository(db).get_by_external_id(payload.user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
+
     # --- Chain lifecycle (gap detection) ---
     chain = await _resolve_chain(
-        chat.id, payload.participant_id, message_repo, chain_repo, job_repo
+        chat.id, user, message_repo, chain_repo, job_repo
     )
 
     # --- Flush pending embedding jobs for this chat before building context ---
-    if payload.semantic_context:
+    if payload.semantic_context and embedding_backend:
         await flush_pending_for_chat(chat.id, db)
 
     # --- Layer 2: open chains from OTHER participants ---
@@ -205,7 +218,7 @@ async def send_message(
     chain_msg_ids = {m.id for c in all_open_chains for m in c.messages}
     same_chat_memories: list[Message] = []
     cross_chat_memories: list[Message] = []
-    if payload.semantic_context:
+    if payload.semantic_context and embedding_backend:
         same_chat_memories, cross_chat_memories = await _fetch_memories(
             chat.id, payload.content,
             message_repo, embedding_backend, embedding_store,
@@ -216,7 +229,7 @@ async def send_message(
     # --- Persist user message ---
     user_msg = await message_repo.create(
         chat.id, Role.USER, payload.content,
-        participant_id=payload.participant_id,
+        user_id=user.id if user else None,
         chain_id=chain.id if chain else None,
     )
 
@@ -250,7 +263,7 @@ async def add_memory_message(
     chat_external_id: uuid.UUID,
     payload: AddMemoryRequest,
     db: AsyncSession = Depends(get_db),
-    embedding_backend: OpenAIEmbeddingBackend = Depends(get_embedding_backend),
+    embedding_backend: OpenAIEmbeddingBackend | None = Depends(get_embedding_backend),
     _: None = Depends(verify_api_key),
 ):
     chat_repo = ChatRepository(db)
@@ -258,13 +271,22 @@ async def add_memory_message(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    message_repo = MessageRepository(db)
-    msg = await message_repo.create(chat.id, payload.role, payload.content)
+    user: User | None = None
+    if payload.user_id is not None:
+        user = await UserRepository(db).get_by_external_id(payload.user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
 
-    if should_embed(payload.role, payload.content):
+    message_repo = MessageRepository(db)
+    msg = await message_repo.create(
+        chat.id, payload.role, payload.content,
+        user_id=user.id if user else None,
+    )
+
+    if embedding_backend and should_embed(payload.role, payload.content):
         vectors = await embedding_backend.embed([payload.content])
         store = get_embedding_store(db)
-        await store.upsert(msg.id, vectors[0], embedding_backend._model)
+        await store.upsert(msg.id, vectors[0], embedding_backend.model_name)
     else:
         await db.commit()
 

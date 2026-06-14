@@ -8,6 +8,12 @@ MIN_EMBED_LENGTH = 20
 class EmbeddingBackend(ABC):
     """Provider-agnostic interface for generating text embeddings."""
 
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Identifier of the model used (stored alongside vectors for provenance)."""
+        raise NotImplementedError
+
     @abstractmethod
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding vector per input text."""

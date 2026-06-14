@@ -17,6 +17,10 @@ class OpenAIEmbeddingBackend(EmbeddingBackend):
         self._model = model or settings.openai_embedding_model
         self._client = client or AsyncOpenAI(api_key=api_key or settings.openai_api_key)
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []

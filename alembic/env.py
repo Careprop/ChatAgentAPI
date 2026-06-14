@@ -14,6 +14,7 @@ from app.db.models.chat import Chat  # noqa: F401
 from app.db.models.embedding_job import EmbeddingJob  # noqa: F401
 from app.db.models.message import Message  # noqa: F401
 from app.db.models.message_embedding import MessageEmbedding  # noqa: F401
+from app.db.models.user import User  # noqa: F401
 
 from app.config.settings import settings
 

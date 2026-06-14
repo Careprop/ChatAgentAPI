@@ -12,10 +12,10 @@ class ChainRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def create(self, chat_id: int, participant_id: str | None) -> MessageChain:
+    async def create(self, chat_id: int, user_id: int | None) -> MessageChain:
         chain = MessageChain(
             chat_id=chat_id,
-            participant_id=participant_id,
+            user_id=user_id,
             status=ChainStatus.OPEN,
             opened_at=datetime.now(timezone.utc),
         )
@@ -25,12 +25,12 @@ class ChainRepository:
         return chain
 
     async def get_open_chain(
-        self, chat_id: int, participant_id: str | None
+        self, chat_id: int, user_id: int | None
     ) -> MessageChain | None:
         result = await self._session.execute(
             select(MessageChain).where(
                 MessageChain.chat_id == chat_id,
-                MessageChain.participant_id == participant_id,
+                MessageChain.user_id == user_id,
                 MessageChain.status == ChainStatus.OPEN,
             )
         )
@@ -77,13 +77,17 @@ class ChainRepository:
     async def get_open_chains_with_messages(
         self, chat_id: int
     ) -> list[MessageChain]:
+        from app.db.models.user import User
         result = await self._session.execute(
             select(MessageChain)
             .where(
                 MessageChain.chat_id == chat_id,
                 MessageChain.status == ChainStatus.OPEN,
             )
-            .options(selectinload(MessageChain.messages))
+            .options(
+                selectinload(MessageChain.messages).selectinload(Message.user),
+                selectinload(MessageChain.user),
+            )
             .order_by(MessageChain.opened_at)
         )
         return list(result.scalars().all())

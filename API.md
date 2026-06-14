@@ -20,6 +20,46 @@ http://localhost:8000
 
 ---
 
+## Пользователи
+
+### Создать пользователя
+
+```
+POST /api/v1/users
+```
+
+**Тело запроса:**
+```json
+{
+  "username": "alice"
+}
+```
+
+**Ответ `201`:**
+```json
+{
+  "external_id": "018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b",
+  "username": "alice",
+  "created_at": "2026-06-15T12:00:00Z"
+}
+```
+
+**Ответ `409`:** username уже занят.
+
+---
+
+### Получить пользователя
+
+```
+GET /api/v1/users/{external_id}
+```
+
+**Ответ `200`:** та же схема, что при создании.
+
+**Ответ `404`:** пользователь не найден.
+
+---
+
 ## Агенты
 
 ### Список доступных агентов
@@ -60,7 +100,7 @@ POST /api/v1/chat
 {
   "external_id": "018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b",
   "title": "Название чата",
-  "created_at": "2026-06-14T12:00:00Z"
+  "created_at": "2026-06-15T12:00:00Z"
 }
 ```
 
@@ -72,13 +112,7 @@ POST /api/v1/chat
 GET /api/v1/chat/{external_id}
 ```
 
-**Параметры пути:**
-
-| Параметр | Тип | Описание |
-|---|---|---|
-| `external_id` | UUID | Идентификатор чата |
-
-**Ответ `200`:** — та же схема, что при создании.
+**Ответ `200`:** та же схема, что при создании.
 
 **Ответ `404`:**
 ```json
@@ -98,20 +132,14 @@ POST /api/v1/chat/{chat_external_id}/messages
 Отправляет пользовательское сообщение и получает ответ от агента. Контекст агенту передаётся в трёх слоях:
 
 - **Layer 1 (messages array)** — фрагменты текущей цепочки участника + текущее сообщение
-- **Layer 2 (system instructions)** — открытые незакрытые цепочки других участников (с метками и временем)
-- **Layer 3 (system instructions)** — семантически релевантные воспоминания из прошлого чата
-
-**Параметры пути:**
-
-| Параметр | Тип | Описание |
-|---|---|---|
-| `chat_external_id` | UUID | Идентификатор чата |
+- **Layer 2 (system instructions)** — открытые незакрытые цепочки других участников (с именами и временем)
+- **Layer 3 (system instructions)** — семантически релевантные воспоминания из текущего и других чатов (требует настроенного embedding-бэкенда)
 
 **Тело запроса:**
 ```json
 {
   "content": "Текст сообщения",
-  "participant_id": "alice",
+  "user_id": "018f1a2b-3c4d-7e5f-8a9b-0c1d2e3f4a5b",
   "agent": "openai",
   "semantic_context": true
 }
@@ -120,9 +148,9 @@ POST /api/v1/chat/{chat_external_id}/messages
 | Поле | Тип | Обязательное | Описание |
 |---|---|---|---|
 | `content` | string | да | Текст сообщения |
-| `participant_id` | string | нет | Идентификатор участника (имя, UUID и т.д.). Используется для группировки сообщений в цепочки и gap-детекции. Без него цепочки не создаются |
+| `user_id` | UUID | нет | `external_id` пользователя. Включает цепочки и идентификацию в контексте агента |
 | `agent` | enum | нет | Провайдер LLM: `openai`, `deepseek`, `claude`. По умолчанию: `openai` |
-| `semantic_context` | bool | нет | Использовать семантический поиск по воспоминаниям. По умолчанию: `true` |
+| `semantic_context` | bool | нет | Использовать семантический поиск по воспоминаниям. По умолчанию: `true`. Игнорируется, если embedding-бэкенд не настроен |
 
 **Ответ `200`:**
 ```json
@@ -132,17 +160,19 @@ POST /api/v1/chat/{chat_external_id}/messages
     "role": "user",
     "content": "Текст сообщения",
     "sequence": 1,
-    "created_at": "2026-06-14T12:00:00Z"
+    "created_at": "2026-06-15T12:00:00Z"
   },
   "assistant_message": {
     "external_id": "018f...",
     "role": "assistant",
     "content": "Ответ агента",
     "sequence": 2,
-    "created_at": "2026-06-14T12:00:01Z"
+    "created_at": "2026-06-15T12:00:01Z"
   }
 }
 ```
+
+**Ответ `404`:** чат или пользователь не найден.
 
 ---
 
@@ -152,19 +182,14 @@ POST /api/v1/chat/{chat_external_id}/messages
 POST /api/v1/chat/{chat_external_id}/messages/memory
 ```
 
-Сохраняет сообщение в историю чата и немедленно генерирует для него эмбеддинг. Ответ от ИИ не генерируется. Используется для ручного пополнения долгосрочной памяти чата.
-
-**Параметры пути:**
-
-| Параметр | Тип | Описание |
-|---|---|---|
-| `chat_external_id` | UUID | Идентификатор чата |
+Сохраняет сообщение и немедленно генерирует эмбеддинг (если бэкенд настроен). Ответ от ИИ не генерируется. Используется для ручного пополнения долгосрочной памяти чата.
 
 **Тело запроса:**
 ```json
 {
   "content": "Пользователь предпочитает ответы на русском языке",
-  "role": "user"
+  "role": "user",
+  "user_id": "018f..."
 }
 ```
 
@@ -172,8 +197,9 @@ POST /api/v1/chat/{chat_external_id}/messages/memory
 |---|---|---|---|
 | `content` | string | да | Текст сообщения |
 | `role` | enum | нет | `user` или `assistant`. По умолчанию: `user` |
+| `user_id` | UUID | нет | `external_id` пользователя |
 
-**Ответ `200`:** — схема `MessageResponse` (см. выше).
+**Ответ `200`:** схема `MessageResponse`.
 
 ---
 
@@ -185,12 +211,6 @@ GET /api/v1/chat/{chat_external_id}/messages
 
 Возвращает до 200 сообщений в хронологическом порядке.
 
-**Параметры пути:**
-
-| Параметр | Тип | Описание |
-|---|---|---|
-| `chat_external_id` | UUID | Идентификатор чата |
-
 **Ответ `200`:**
 ```json
 [
@@ -199,65 +219,44 @@ GET /api/v1/chat/{chat_external_id}/messages
     "role": "user",
     "content": "Привет",
     "sequence": 1,
-    "created_at": "2026-06-14T12:00:00Z"
-  },
-  {
-    "external_id": "018f...",
-    "role": "assistant",
-    "content": "Здравствуйте!",
-    "sequence": 2,
-    "created_at": "2026-06-14T12:00:01Z"
+    "created_at": "2026-06-15T12:00:00Z"
   }
 ]
-```
-
-**Ответ `404`:**
-```json
-{ "detail": "Chat not found" }
 ```
 
 ---
 
 ## Цепочки сообщений (chains)
 
-Когда в запросе указан `participant_id`, сообщения автоматически группируются в цепочки — логические единицы одной мысли одного участника.
+Когда в запросе указан `user_id`, сообщения автоматически группируются в цепочки — логические единицы одной мысли одного участника.
 
 **Lifecycle цепочки:**
 
 ```
-Первое сообщение участника → создаётся цепочка (status: open)
-Следующие сообщения       → присоединяются к той же цепочке
-Пауза > chain_gap_seconds → при следующем сообщении цепочка закрывается
-                             (status: closed) и ставится в очередь на эмбеддинг
-Воркер обрабатывает       → конкатенация всех фрагментов → один вектор
-                             (status: embedded)
+Первое сообщение пользователя  → создаётся цепочка (status: open)
+Следующие сообщения            → присоединяются к той же цепочке
+Пауза > CHAIN_GAP_SECONDS      → при следующем сообщении старая цепочка
+                                  закрывается (status: closed), ставится
+                                  в очередь на эмбеддинг
+Воркер обрабатывает            → concat всех фрагментов → один вектор
+                                  (status: embedded)
+Брошенные цепочки              → воркер сам закрывает цепочки без активности
+                                  дольше CHAIN_GAP_SECONDS
 ```
-
-**Gap-детекция:** порог паузы задаётся переменной окружения `CHAIN_GAP_SECONDS` (по умолчанию 5 секунд).
-
-**Эмбеддинг цепочки:** при закрытии все фрагменты конкатенируются и эмбеддируются как одна семантическая единица. Вектор сохраняется на последнем сообщении цепочки и участвует в семантическом поиске при следующих запросах.
 
 ---
 
 ## Как агент видит контекст
-
-При запросе генерации агенту передаётся:
 
 ```
 [System Instructions]
 You are a helpful assistant.
 
 ## Ongoing threads (other participants — may be incomplete thoughts)
-These messages are from open chains that have not yet been resolved.
-Be aware of them but do not treat them as part of the current dialogue.
-
 [2026-06-15 12:01 UTC] bob: подожди
 [2026-06-15 12:01 UTC] bob: я имею в виду что
 
 ## Long-term memory — this conversation
-Relevant messages retrieved from earlier in this conversation.
-Use them at your discretion — they are NOT part of the recent dialogue.
-
 [2026-06-10 14:32 UTC] alice: как настроить базу данных?
 [2026-06-10 14:33 UTC] assistant: нужно задать POSTGRES_* переменные
 
@@ -269,11 +268,12 @@ its origin to the user.
 [2026-06-12 09:15 UTC] bob: мы используем PostgreSQL 16
 
 [Messages array]
-user: "предыдущий фрагмент текущей цепочки alice"
-user: "текущее сообщение alice"   ← Layer 1
+user: "предыдущий фрагмент цепочки alice"
+user: "текущее сообщение alice"
 ```
 
-Блок **other conversations** появляется только если `CROSS_CHAT_SEMANTIC_LIMIT > 0` и семантический поиск нашёл релевантные сообщения из других чатов. Агент сам решает — раскрывать ли пользователю факт что информация из другого разговора.
+Блоки **memory** появляются только если настроен embedding-бэкенд и `semantic_context: true`.
+Блок **other conversations** появляется только если `CROSS_CHAT_SEMANTIC_LIMIT > 0`.
 
 ---
 
@@ -282,7 +282,8 @@ user: "текущее сообщение alice"   ← Layer 1
 | HTTP | Причина | Когда возникает |
 |---|---|---|
 | `401` | Неверный или отсутствующий `X-API-Key` | Все запросы без верного ключа |
-| `404` | Чат не найден | `GET /chat/{id}`, `POST/GET messages` |
+| `404` | Ресурс не найден | Чат, пользователь не существует |
+| `409` | Конфликт | Username уже занят |
 | `422` | Невалидное тело запроса | Неверный тип поля, неизвестный `agent` или `role` |
 | `429` | Rate limit провайдера | LLM вернул 429 |
 | `502` | Ошибка на стороне провайдера | Неверный ключ, недоступная модель, сетевая ошибка |
@@ -301,18 +302,57 @@ user: "текущее сообщение alice"   ← Layer 1
 
 ---
 
+## Эмбеддинги
+
+Эмбеддинги используются для семантического поиска в долгосрочной памяти (Layer 3). Бэкенд выбирается переменной `EMBEDDING_BACKEND`.
+
+### sentence-transformers (по умолчанию)
+
+Запускается локально, не требует API-ключей. Модель скачивается с HuggingFace при первом старте и кешируется.
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `EMBEDDING_BACKEND` | `sentence_transformers` | Выбор бэкенда |
+| `ST_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Модель (поддерживает русский язык) |
+| `EMBEDDING_DIMENSIONS` | `384` | Размерность векторов |
+
+Рекомендуемые модели:
+
+| Модель | Dims | Языки | Размер |
+|---|---|---|---|
+| `paraphrase-multilingual-MiniLM-L12-v2` | 384 | 50+, включая RU | 470 MB |
+| `all-MiniLM-L6-v2` | 384 | EN | 80 MB |
+| `all-mpnet-base-v2` | 768 | EN | 420 MB |
+| `multilingual-e5-large` | 1024 | 100+ | 1.1 GB |
+
+> При смене модели с другой размерностью необходимо изменить `EMBEDDING_DIMENSIONS` и выполнить `alembic upgrade head` (существующие векторы будут удалены).
+
+### OpenAI
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `EMBEDDING_BACKEND` | — | Установить в `openai` |
+| `OPENAI_API_KEY` | — | Ключ OpenAI (обязательный для этого бэкенда) |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель |
+| `EMBEDDING_DIMENSIONS` | `1536` | Установить в 1536 для `text-embedding-3-small` |
+
+---
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `API_KEY` | — | Ключ аутентификации для входящих запросов |
-| `OPENAI_API_KEY` | — | Ключ OpenAI (обязательный) |
+| `OPENAI_API_KEY` | — | Ключ OpenAI (нужен для агента `openai` или бэкенда `openai`) |
 | `OPENAI_MODEL` | `gpt-5.4-mini` | Модель OpenAI |
-| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель эмбеддингов |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `DEEPSEEK_API_KEY` | — | Ключ DeepSeek (опциональный) |
 | `DEEPSEEK_MODEL` | `deepseek-chat` | Модель DeepSeek |
 | `ANTHROPIC_API_KEY` | — | Ключ Anthropic (опциональный) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Модель Claude |
+| `EMBEDDING_BACKEND` | `sentence_transformers` | Бэкенд эмбеддингов: `sentence_transformers` или `openai` |
+| `ST_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Модель sentence-transformers |
+| `EMBEDDING_DIMENSIONS` | `384` | Размерность векторов (должна совпадать с моделью) |
 | `CHAIN_GAP_SECONDS` | `5` | Пауза в секундах для авто-закрытия цепочки |
 | `EMBEDDING_WORKER_POLL_INTERVAL` | `2.0` | Интервал опроса очереди эмбеддингов (сек) |
 | `EMBEDDING_JOB_MAX_ATTEMPTS` | `3` | Макс. попыток обработки одного job'а |

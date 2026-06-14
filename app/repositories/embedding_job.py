@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.chain import MessageChain
 from app.db.models.embedding_job import EmbeddingJob, JobStatus
 from app.db.models.message import Message
 from app.db.models.message_embedding import MessageEmbedding
@@ -46,13 +47,20 @@ class EmbeddingJobRepository:
     async def claim_pending_for_chat(
         self, chat_id: int, *, limit: int = 50
     ) -> list[EmbeddingJob]:
-        """Claim pending jobs scoped to a specific chat (used for flush at generation)."""
+        """Claim pending jobs scoped to a specific chat (used for flush at generation).
+
+        Uses subqueries instead of JOINs — PostgreSQL forbids FOR UPDATE on the
+        nullable side of an OUTER JOIN.
+        """
+        msg_ids = select(Message.id).where(Message.chat_id == chat_id).scalar_subquery()
+        chain_ids = select(MessageChain.id).where(MessageChain.chat_id == chat_id).scalar_subquery()
+
         result = await self._session.execute(
             select(EmbeddingJob)
-            .outerjoin(Message, Message.id == EmbeddingJob.message_id)
             .where(
                 EmbeddingJob.status == JobStatus.PENDING,
-                (EmbeddingJob.message_id.is_(None)) | (Message.chat_id == chat_id),
+                (EmbeddingJob.message_id.in_(msg_ids))
+                | (EmbeddingJob.chain_id.in_(chain_ids)),
             )
             .order_by(EmbeddingJob.created_at)
             .limit(limit)

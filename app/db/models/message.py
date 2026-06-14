@@ -12,6 +12,7 @@ from app.db.mixins.timestamps import TimestampMixin
 if TYPE_CHECKING:
     from app.db.models.chain import MessageChain
     from app.db.models.message_embedding import MessageEmbedding
+    from app.db.models.user import User
 
 
 class Message(Base, TimestampMixin):
@@ -38,7 +39,12 @@ class Message(Base, TimestampMixin):
         index=True,
     )
 
-    participant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     role: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -52,6 +58,8 @@ class Message(Base, TimestampMixin):
         back_populates="messages",
         lazy="raise",
     )
+
+    user: Mapped[User | None] = relationship("User", lazy="raise")
 
     embedding: Mapped[MessageEmbedding | None] = relationship(
         "MessageEmbedding",

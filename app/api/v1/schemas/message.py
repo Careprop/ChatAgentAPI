@@ -9,7 +9,7 @@ from app.agent.schemas import AgentProvider
 
 class SendMessageRequest(BaseModel):
     content: str
-    participant_id: str | None = None
+    user_id: uuid.UUID | None = None
     agent: AgentProvider = AgentProvider.OPENAI
     semantic_context: bool = True
 
@@ -17,6 +17,7 @@ class SendMessageRequest(BaseModel):
 class AddMemoryRequest(BaseModel):
     content: str
     role: Literal["user", "assistant"] = "user"
+    user_id: uuid.UUID | None = None
 
 
 class MessageResponse(BaseModel):

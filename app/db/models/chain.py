@@ -10,6 +10,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.message import Message
+    from app.db.models.user import User
 
 
 class ChainStatus:
@@ -28,7 +29,11 @@ class MessageChain(Base):
         nullable=False,
     )
 
-    participant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     status: Mapped[str] = mapped_column(Text, nullable=False, default=ChainStatus.OPEN)
 
@@ -46,7 +51,9 @@ class MessageChain(Base):
         lazy="raise",
     )
 
+    user: Mapped[User | None] = relationship("User", lazy="raise")
+
     __table_args__ = (
-        Index("ix_message_chains_chat_participant", "chat_id", "participant_id"),
+        Index("ix_message_chains_chat_user", "chat_id", "user_id"),
         Index("ix_message_chains_chat_status", "chat_id", "status"),
     )

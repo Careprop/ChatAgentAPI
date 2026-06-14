@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.db.models.message import Message
 
@@ -24,7 +25,7 @@ class MessageRepository:
         role: str,
         content: str,
         *,
-        participant_id: str | None = None,
+        user_id: int | None = None,
         chain_id: int | None = None,
     ) -> Message:
         seq = await self._next_sequence(chat_id)
@@ -33,7 +34,7 @@ class MessageRepository:
             role=role,
             content=content,
             sequence=seq,
-            participant_id=participant_id,
+            user_id=user_id,
             chain_id=chain_id,
         )
         self.session.add(message)
@@ -54,7 +55,6 @@ class MessageRepository:
         return result.scalar_one_or_none()
 
     async def list_by_chat(self, chat_id: int, *, limit: int) -> list[Message]:
-        """Return the `limit` most recent messages ordered oldest-first."""
         result = await self.session.execute(
             select(Message)
             .where(Message.chat_id == chat_id)
@@ -65,23 +65,22 @@ class MessageRepository:
         return list(reversed(rows))
 
     async def list_by_chain(self, chain_id: int) -> list[Message]:
-        """Return all messages in a chain ordered by sequence."""
         result = await self.session.execute(
             select(Message)
             .where(Message.chain_id == chain_id)
+            .options(joinedload(Message.user))
             .order_by(Message.sequence)
         )
         return list(result.scalars().all())
 
-    async def get_last_by_participant(
-        self, chat_id: int, participant_id: str
+    async def get_last_by_user(
+        self, chat_id: int, user_id: int
     ) -> Message | None:
-        """Return the most recent message from a participant — used for gap detection."""
         result = await self.session.execute(
             select(Message)
             .where(
                 Message.chat_id == chat_id,
-                Message.participant_id == participant_id,
+                Message.user_id == user_id,
             )
             .order_by(Message.sequence.desc())
             .limit(1)
@@ -92,6 +91,8 @@ class MessageRepository:
         if not ids:
             return []
         result = await self.session.execute(
-            select(Message).where(Message.id.in_(ids))
+            select(Message)
+            .where(Message.id.in_(ids))
+            .options(joinedload(Message.user))
         )
         return list(result.scalars().all())
