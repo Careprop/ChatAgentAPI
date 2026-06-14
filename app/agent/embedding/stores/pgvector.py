@@ -36,3 +36,16 @@ class PgvectorStore(EmbeddingStore):
             .limit(k)
         )
         return list(result.scalars().all())
+
+    async def search_other_chats(
+        self, exclude_chat_id: int, vector: list[float], *, k: int
+    ) -> list[int]:
+        """Semantic search across all chats except the current one."""
+        result = await self._session.execute(
+            select(MessageEmbedding.message_id)
+            .join(Message, Message.id == MessageEmbedding.message_id)
+            .where(Message.chat_id != exclude_chat_id)
+            .order_by(MessageEmbedding.embedding.cosine_distance(vector))
+            .limit(k)
+        )
+        return list(result.scalars().all())

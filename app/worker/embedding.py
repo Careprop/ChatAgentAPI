@@ -82,11 +82,30 @@ async def flush_pending_for_chat(chat_id: int, session) -> None:
     await process_jobs(jobs, session)
 
 
+async def _close_abandoned_chains(session) -> None:
+    """Find open chains with no recent activity and close them."""
+    chain_repo = ChainRepository(session)
+    job_repo = EmbeddingJobRepository(session)
+
+    abandoned = await chain_repo.get_abandoned_chains(settings.chain_gap_seconds)
+    if not abandoned:
+        return
+
+    for chain in abandoned:
+        await chain_repo.close(chain.id)
+        await job_repo.create_for_chain(chain.id)
+        logger.debug("Auto-closed abandoned chain %d (participant=%s)", chain.id, chain.participant_id)
+
+    await session.commit()
+    logger.info("Closed %d abandoned chain(s)", len(abandoned))
+
+
 async def _worker_loop() -> None:
     logger.info("Embedding worker started (poll interval: %ss)", settings.embedding_worker_poll_interval)
     while True:
         try:
             async with AsyncSessionLocal() as session:
+                await _close_abandoned_chains(session)
                 job_repo = EmbeddingJobRepository(session)
                 jobs = await job_repo.claim_pending(limit=10)
                 await session.commit()

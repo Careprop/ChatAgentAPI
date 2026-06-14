@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models.chain import ChainStatus, MessageChain
+from app.db.models.message import Message
 
 
 class ChainRepository:
@@ -51,6 +52,27 @@ class ChainRepository:
             .where(MessageChain.id == chain_id)
             .values(status=ChainStatus.EMBEDDED)
         )
+
+    async def get_abandoned_chains(self, gap_seconds: int) -> list[MessageChain]:
+        """Return open chains whose last message is older than gap_seconds."""
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=gap_seconds)
+
+        last_msg = (
+            select(Message.chain_id, func.max(Message.created_at).label("last_at"))
+            .where(Message.chain_id.isnot(None))
+            .group_by(Message.chain_id)
+            .subquery()
+        )
+
+        result = await self._session.execute(
+            select(MessageChain)
+            .outerjoin(last_msg, last_msg.c.chain_id == MessageChain.id)
+            .where(
+                MessageChain.status == ChainStatus.OPEN,
+                func.coalesce(last_msg.c.last_at, MessageChain.opened_at) < cutoff,
+            )
+        )
+        return list(result.scalars().all())
 
     async def get_open_chains_with_messages(
         self, chat_id: int

@@ -13,8 +13,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
 
-    # How many semantically relevant messages added to context
+    # How many semantically relevant messages added to context (same chat)
     context_semantic_limit: int = 4
+    # How many cross-chat memories to include (0 = disabled)
+    cross_chat_semantic_limit: int = 2
 
     # Seconds of silence after which a participant's chain is auto-closed
     chain_gap_seconds: int = 5

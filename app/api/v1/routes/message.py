@@ -53,19 +53,38 @@ def _format_open_chains_block(
     return "\n".join(lines).rstrip()
 
 
-def _format_memory_block(memories: list[Message]) -> str | None:
-    if not memories:
+def _format_memory_block(
+    same_chat: list[Message],
+    cross_chat: list[Message],
+) -> str | None:
+    if not same_chat and not cross_chat:
         return None
-    lines = [
-        "## Long-term memory (retrieved by semantic search)",
-        "Relevant messages from earlier in this conversation.",
-        "Use them at your discretion — they are NOT part of the recent dialogue.",
-        "",
-    ]
-    for m in sorted(memories, key=lambda msg: msg.sequence):
-        ts = m.created_at.strftime("%Y-%m-%d %H:%M UTC")
-        participant = m.participant_id or m.role
-        lines.append(f"[{ts}] {participant}: {m.content}")
+    lines: list[str] = []
+
+    if same_chat:
+        lines += [
+            "## Long-term memory — this conversation",
+            "Relevant messages retrieved from earlier in this conversation.",
+            "Use them at your discretion — they are NOT part of the recent dialogue.",
+            "",
+        ]
+        for m in sorted(same_chat, key=lambda msg: msg.sequence):
+            ts = m.created_at.strftime("%Y-%m-%d %H:%M UTC")
+            lines.append(f"[{ts}] {m.participant_id or m.role}: {m.content}")
+
+    if cross_chat:
+        if lines:
+            lines.append("")
+        lines += [
+            "## Long-term memory — other conversations",
+            "The following context was retrieved from a DIFFERENT conversation.",
+            "Use it at your discretion. Decide independently whether to disclose its origin to the user.",
+            "",
+        ]
+        for m in sorted(cross_chat, key=lambda msg: msg.created_at):
+            ts = m.created_at.strftime("%Y-%m-%d %H:%M UTC")
+            lines.append(f"[{ts}] {m.participant_id or m.role}: {m.content}")
+
     return "\n".join(lines)
 
 
@@ -111,18 +130,32 @@ async def _fetch_memories(
     embedding_backend: OpenAIEmbeddingBackend,
     embedding_store: PgvectorStore,
     exclude_ids: set[int],
-) -> list[Message]:
+) -> tuple[list[Message], list[Message]]:
+    """Returns (same_chat_memories, cross_chat_memories)."""
     if not should_embed(Role.USER, current_content):
-        return []
+        return [], []
     try:
         query_vec = (await embedding_backend.embed([current_content]))[0]
-        semantic_ids = await embedding_store.search_in_chat(
+
+        same_ids = await embedding_store.search_in_chat(
             chat_id, query_vec, k=settings.context_semantic_limit
         )
-        novel_ids = [i for i in semantic_ids if i not in exclude_ids]
-        return await message_repo.get_by_ids(novel_ids) if novel_ids else []
+        same = await message_repo.get_by_ids(
+            [i for i in same_ids if i not in exclude_ids]
+        )
+
+        cross: list[Message] = []
+        if settings.cross_chat_semantic_limit > 0:
+            cross_ids = await embedding_store.search_other_chats(
+                chat_id, query_vec, k=settings.cross_chat_semantic_limit
+            )
+            cross = await message_repo.get_by_ids(
+                [i for i in cross_ids if i not in exclude_ids]
+            )
+
+        return same, cross
     except Exception:
-        return []
+        return [], []
 
 
 # ---------------------------------------------------------------------------
@@ -170,14 +203,15 @@ async def send_message(
 
     # --- Layer 3: semantic memories ---
     chain_msg_ids = {m.id for c in all_open_chains for m in c.messages}
-    memories: list[Message] = []
+    same_chat_memories: list[Message] = []
+    cross_chat_memories: list[Message] = []
     if payload.semantic_context:
-        memories = await _fetch_memories(
+        same_chat_memories, cross_chat_memories = await _fetch_memories(
             chat.id, payload.content,
             message_repo, embedding_backend, embedding_store,
             exclude_ids=chain_msg_ids,
         )
-    memory_block = _format_memory_block(memories)
+    memory_block = _format_memory_block(same_chat_memories, cross_chat_memories)
 
     # --- Persist user message ---
     user_msg = await message_repo.create(

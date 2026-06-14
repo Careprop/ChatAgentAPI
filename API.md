@@ -228,17 +228,32 @@ GET /api/v1/chat/{chat_external_id}/messages
 You are a helpful assistant.
 
 ## Ongoing threads (other participants — may be incomplete thoughts)
-[2026-06-14 12:01 UTC] bob: подожди
-[2026-06-14 12:01 UTC] bob: я имею в виду что
+These messages are from open chains that have not yet been resolved.
+Be aware of them but do not treat them as part of the current dialogue.
 
-## Long-term memory (retrieved by semantic search)
+[2026-06-15 12:01 UTC] bob: подожди
+[2026-06-15 12:01 UTC] bob: я имею в виду что
+
+## Long-term memory — this conversation
+Relevant messages retrieved from earlier in this conversation.
+Use them at your discretion — they are NOT part of the recent dialogue.
+
 [2026-06-10 14:32 UTC] alice: как настроить базу данных?
 [2026-06-10 14:33 UTC] assistant: нужно задать POSTGRES_* переменные
+
+## Long-term memory — other conversations
+The following context was retrieved from a DIFFERENT conversation.
+Use it at your discretion. Decide independently whether to disclose
+its origin to the user.
+
+[2026-06-12 09:15 UTC] bob: мы используем PostgreSQL 16
 
 [Messages array]
 user: "предыдущий фрагмент текущей цепочки alice"
 user: "текущее сообщение alice"   ← Layer 1
 ```
+
+Блок **other conversations** появляется только если `CROSS_CHAT_SEMANTIC_LIMIT > 0` и семантический поиск нашёл релевантные сообщения из других чатов. Агент сам решает — раскрывать ли пользователю факт что информация из другого разговора.
 
 ---
 
@@ -281,7 +296,8 @@ user: "текущее сообщение alice"   ← Layer 1
 | `CHAIN_GAP_SECONDS` | `5` | Пауза в секундах для авто-закрытия цепочки |
 | `EMBEDDING_WORKER_POLL_INTERVAL` | `2.0` | Интервал опроса очереди эмбеддингов (сек) |
 | `EMBEDDING_JOB_MAX_ATTEMPTS` | `3` | Макс. попыток обработки одного job'а |
-| `CONTEXT_SEMANTIC_LIMIT` | `4` | Макс. воспоминаний из семантического поиска |
+| `CONTEXT_SEMANTIC_LIMIT` | `4` | Макс. воспоминаний из текущего чата |
+| `CROSS_CHAT_SEMANTIC_LIMIT` | `2` | Макс. воспоминаний из других чатов (0 = выключено) |
 | `POSTGRES_HOST` | — | Хост PostgreSQL |
 | `POSTGRES_PORT` | — | Порт PostgreSQL |
 | `POSTGRES_DB` | — | Имя базы данных |
