@@ -13,6 +13,7 @@ from app.agent.exceptions import (
     AgentRateLimitError,
     AgentTimeoutError,
 )
+from app.api.v1.routes.agent import router as agent_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.message import router as message_router
 from app.worker.embedding import start_worker
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+app.include_router(agent_router)
 app.include_router(chat_router)
 app.include_router(message_router)
 
