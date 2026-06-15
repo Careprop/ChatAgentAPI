@@ -27,6 +27,13 @@ class Chat(Base, TimestampMixin, SoftDeleteMixin):
         nullable=False
     )
 
+    # Client-controlled unique key (e.g. "tg:123456789") for bot restart recovery.
+    external_key: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        unique=True,
+    )
+
     __table_args__ = (
         Index(
             "ix_chats_active_external_id",

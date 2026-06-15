@@ -10,6 +10,7 @@ from app.agent.schemas import AgentProvider
 class SendMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=32_000)
     user_id: uuid.UUID | None = None
+    display_name: str | None = Field(None, max_length=256)
     agent: AgentProvider = AgentProvider.OPENAI
     semantic_context: bool = True
     cross_chat_context: bool = True
@@ -20,6 +21,7 @@ class AddMemoryRequest(BaseModel):
     content: str = Field(min_length=1, max_length=32_000)
     role: Literal["user", "assistant"] = "user"
     user_id: uuid.UUID | None = None
+    display_name: str | None = Field(None, max_length=256)
     metadata: dict[str, Any] | None = None
 
 
@@ -40,8 +42,8 @@ class SendMessageResponse(BaseModel):
 
 
 class MemoryFlushRequest(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None = None
 
 
 class MemoryFlushResponse(BaseModel):
-    closed: bool
+    count: int

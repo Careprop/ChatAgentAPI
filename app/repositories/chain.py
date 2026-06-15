@@ -53,6 +53,16 @@ class ChainRepository:
             .values(status=ChainStatus.EMBEDDED)
         )
 
+    async def list_open(self, chat_id: int) -> list[MessageChain]:
+        """All open chains in a chat — lightweight, no messages loaded."""
+        result = await self._session.execute(
+            select(MessageChain).where(
+                MessageChain.chat_id == chat_id,
+                MessageChain.status == ChainStatus.OPEN,
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_abandoned_chains(self, gap_seconds: int) -> list[MessageChain]:
         """Return open chains whose last message is older than gap_seconds."""
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=gap_seconds)

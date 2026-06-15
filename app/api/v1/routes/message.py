@@ -88,7 +88,9 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 def _label(user: User | None, role: str) -> str:
-    return user.username if user else role
+    if user is None:
+        return role
+    return user.display_name or role
 
 
 def _cosine_distance(v1: list[float], v2: list[float]) -> float:
@@ -127,7 +129,7 @@ def _format_open_chains_block(
         "",
     ]
     for chain in other:
-        label = chain.user.username if chain.user else "unknown"
+        label = (chain.user.display_name if chain.user else None) or "unknown"
         for msg in chain.messages:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M UTC")
             lines.append(f"[{ts}] {label}: {msg.content}")
@@ -300,19 +302,23 @@ async def send_message(
 
     # --- Resolve user ---
     user: User | None = None
+    user_repo = UserRepository(db)
     if payload.user_id is not None:
-        user = await UserRepository(db).get_by_external_id(payload.user_id)
+        user = await user_repo.get_by_external_id(payload.user_id)
         if not user:
             raise HTTPException(404, "User not found")
+        if payload.display_name is not None and payload.display_name != user.display_name:
+            await user_repo.update_display_name(user, payload.display_name)
     _user_id: int | None = user.id if user else None
-    _username: str | None = user.username if user else None
+    _display_name: str | None = user.display_name if user else None
 
     # --- Per-user serialization: only one in-flight request per identified user ---
     if _user_id is not None:
         if not await _claim_user(_user_id):
             raise HTTPException(
-                409,
-                "Another request is already being processed for this user. Please wait and retry.",
+                status_code=429,
+                detail="concurrent_request",
+                headers={"Retry-After": "1"},
             )
 
     try:
@@ -366,7 +372,7 @@ async def send_message(
             messages_for_agent,
             open_chains_context=open_chains_block,
             memory_context=memory_block,
-            username=_username,
+            username=_display_name,
         )
 
         # --- Transaction 2: persist facts + assistant message ---
@@ -412,10 +418,13 @@ async def add_memory_message(
         raise HTTPException(404, "Chat not found")
 
     user: User | None = None
+    user_repo = UserRepository(db)
     if payload.user_id is not None:
-        user = await UserRepository(db).get_by_external_id(payload.user_id)
+        user = await user_repo.get_by_external_id(payload.user_id)
         if not user:
             raise HTTPException(404, "User not found")
+        if payload.display_name is not None and payload.display_name != user.display_name:
+            await user_repo.update_display_name(user, payload.display_name)
 
     message_repo = MessageRepository(db)
     chain_repo = ChainRepository(db)
@@ -452,26 +461,36 @@ async def flush_memory_chain(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),
 ):
-    """Close a user's open chain immediately without waiting for the idle timeout."""
+    """Close open chain(s) immediately without waiting for the idle timeout.
+    If user_id is provided — closes only that user's chain.
+    If user_id is null — closes all open chains in the chat (batch flush).
+    """
     chat_repo = ChatRepository(db)
     chat = await chat_repo.get_by_external_id(chat_external_id)
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    user = await UserRepository(db).get_by_external_id(payload.user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-
     chain_repo = ChainRepository(db)
-    chain = await chain_repo.get_open_chain(chat.id, user.id)
-    if chain is None:
-        return MemoryFlushResponse(closed=False)
-
     job_repo = EmbeddingJobRepository(db)
-    await chain_repo.close(chain.id)
-    await job_repo.create_for_chain(chain.id)
-    await db.commit()
-    return MemoryFlushResponse(closed=True)
+
+    if payload.user_id is not None:
+        user = await UserRepository(db).get_by_external_id(payload.user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
+        chain = await chain_repo.get_open_chain(chat.id, user.id)
+        if chain is None:
+            return MemoryFlushResponse(count=0)
+        await chain_repo.close(chain.id)
+        await job_repo.create_for_chain(chain.id)
+        await db.commit()
+        return MemoryFlushResponse(count=1)
+    else:
+        chains = await chain_repo.list_open(chat.id)
+        for chain in chains:
+            await chain_repo.close(chain.id)
+            await job_repo.create_for_chain(chain.id)
+        await db.commit()
+        return MemoryFlushResponse(count=len(chains))
 
 
 @router.get("", response_model=list[MessageResponse])

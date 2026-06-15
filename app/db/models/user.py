@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid7
 
-from sqlalchemy import BigInteger, Text
+from sqlalchemy import BigInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -18,4 +18,6 @@ class User(Base, TimestampMixin):
         unique=True, nullable=False, default=uuid7
     )
 
-    username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    client_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+
+    display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)

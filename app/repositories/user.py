@@ -10,8 +10,8 @@ class UserRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def create(self, username: str) -> User:
-        user = User(username=username)
+    async def create(self, client_id: str, display_name: str | None = None) -> User:
+        user = User(client_id=client_id, display_name=display_name)
         self._session.add(user)
         await self._session.flush()
         await self._session.refresh(user)
@@ -23,8 +23,13 @@ class UserRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_username(self, username: str) -> User | None:
+    async def get_by_client_id(self, client_id: str) -> User | None:
         result = await self._session.execute(
-            select(User).where(User.username == username)
+            select(User).where(User.client_id == client_id)
         )
         return result.scalar_one_or_none()
+
+    async def update_display_name(self, user: User, display_name: str) -> None:
+        user.display_name = display_name
+        self._session.add(user)
+        await self._session.flush()
