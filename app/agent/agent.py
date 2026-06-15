@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from app.agent.base import AgentBackend
 from app.agent.schemas import AgentMessage, AgentResponse
+from app.agent.tools import make_save_fact_tool
 
 DEFAULT_INSTRUCTIONS = "You are a helpful assistant."
 
@@ -25,14 +26,27 @@ class Agent:
         temperature: float | None = None,
         open_chains_context: str | None = None,
         memory_context: str | None = None,
+        save_facts: bool = True,
+        username: str | None = None,
     ) -> AgentResponse:
         instructions = self._instructions
         if open_chains_context:
             instructions = f"{instructions}\n\n{open_chains_context}"
         if memory_context:
             instructions = f"{instructions}\n\n{memory_context}"
-        return await self._backend.generate(
-            messages,
-            instructions=instructions,
-            temperature=temperature,
-        )
+
+        kwargs = dict(instructions=instructions, temperature=temperature)
+        tools = [make_save_fact_tool(username)] if save_facts else None
+        response = await self._backend.generate(messages, **kwargs, tools=tools)
+
+        # Some backends (e.g. Anthropic) stop after tool calls without a text reply.
+        # Make a follow-up call without tools to get the actual response text.
+        if not response.content and response.tool_calls:
+            text_response = await self._backend.generate(messages, **kwargs)
+            return AgentResponse(
+                content=text_response.content,
+                model=text_response.model,
+                tool_calls=response.tool_calls,
+            )
+
+        return response

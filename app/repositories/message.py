@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -12,6 +12,11 @@ class MessageRepository:
         self.session = session
 
     async def _next_sequence(self, chat_id: int) -> int:
+        # Advisory lock serializes sequence allocation per chat without conflicting
+        # with FK-triggered ShareLocks that a SELECT…FOR UPDATE would deadlock against.
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(:chat_id)"), {"chat_id": chat_id}
+        )
         result = await self.session.execute(
             select(func.coalesce(func.max(Message.sequence), 0)).where(
                 Message.chat_id == chat_id
@@ -53,6 +58,19 @@ class MessageRepository:
             select(Message).where(Message.id == message_id)
         )
         return result.scalar_one_or_none()
+
+    async def list_direct(self, chat_id: int, *, limit: int) -> list[Message]:
+        """Recent messages not in any chain — direct agent-call exchanges."""
+        result = await self.session.execute(
+            select(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.chain_id.is_(None),
+            )
+            .order_by(Message.sequence.desc())
+            .limit(limit)
+        )
+        return list(reversed(result.scalars().all()))
 
     async def list_by_chat(self, chat_id: int, *, limit: int) -> list[Message]:
         result = await self.session.execute(

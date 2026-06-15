@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from app.agent.schemas import AgentMessage, AgentResponse
+from app.agent.schemas import AgentMessage, AgentResponse, ToolDefinition
 
 
 class AgentBackend(ABC):
@@ -14,6 +14,7 @@ class AgentBackend(ABC):
         *,
         instructions: str | None = None,
         temperature: float | None = None,
+        tools: list[ToolDefinition] | None = None,
     ) -> AgentResponse:
         """Produce a single assistant reply for the given conversation."""
         raise NotImplementedError

@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 
 import openai
@@ -5,7 +6,7 @@ from openai import AsyncOpenAI
 
 from app.agent.base import AgentBackend
 from app.agent.exceptions import AgentAuthError, AgentProviderError, AgentRateLimitError, AgentTimeoutError
-from app.agent.schemas import AgentMessage, AgentResponse
+from app.agent.schemas import AgentMessage, AgentResponse, ToolCall, ToolDefinition
 from app.config.settings import settings
 
 
@@ -24,12 +25,17 @@ class OpenAIBackend(AgentBackend):
             api_key=api_key or settings.openai_api_key
         )
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def generate(
         self,
         messages: Sequence[AgentMessage],
         *,
         instructions: str | None = None,
         temperature: float | None = None,
+        tools: list[ToolDefinition] | None = None,
     ) -> AgentResponse:
         params: dict = {
             "model": self._model,
@@ -42,9 +48,18 @@ class OpenAIBackend(AgentBackend):
 
         if instructions is not None:
             params["instructions"] = instructions
-
         if temperature is not None:
             params["temperature"] = temperature
+        if tools:
+            params["tools"] = [
+                {
+                    "type": "function",
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                }
+                for t in tools
+            ]
 
         try:
             response = await self._client.responses.create(**params)
@@ -57,8 +72,15 @@ class OpenAIBackend(AgentBackend):
         except openai.APIError as exc:
             raise AgentProviderError(f"OpenAI error: {exc.message}") from exc
 
+        tool_calls = [
+            ToolCall(name=item.name, arguments=json.loads(item.arguments))
+            for item in response.output
+            if item.type == "function_call"
+        ]
+
         return AgentResponse(
             content=response.output_text,
             model=response.model,
+            tool_calls=tool_calls,
             raw=response,
         )

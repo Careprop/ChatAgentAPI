@@ -9,4 +9,4 @@ openai==2.41.1
 anthropic==0.109.1
 python-dotenv==1.2.2
 pgvector==0.4.2
-sentence-transformers>=3.0.0
+sentence-transformers==5.5.1

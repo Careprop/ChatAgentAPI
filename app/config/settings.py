@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Embedding worker
     embedding_worker_poll_interval: float = 2.0
     embedding_job_max_attempts: int = 3
+    # Set to false on API instances when running worker as a separate service
+    worker_enabled: bool = True
 
     api_key: str
 

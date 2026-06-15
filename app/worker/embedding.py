@@ -12,19 +12,17 @@ from app.repositories.message import MessageRepository
 
 logger = logging.getLogger(__name__)
 
-_embedding_backend = None
-_backend_init_attempted = False
+_warned_no_backend = False
 
 
 def _get_backend():
-    global _embedding_backend, _backend_init_attempted
-    if not _backend_init_attempted:
-        _backend_init_attempted = True
-        from app.agent.embedding.factory import create_embedding_backend
-        _embedding_backend = create_embedding_backend()
-        if _embedding_backend is None:
-            logger.warning("No embedding backend configured — worker will skip jobs")
-    return _embedding_backend
+    global _warned_no_backend
+    from app.agent.embedding.factory import get_embedding_backend
+    backend = get_embedding_backend()
+    if backend is None and not _warned_no_backend:
+        _warned_no_backend = True
+        logger.warning("No embedding backend configured — worker will skip jobs")
+    return backend
 
 
 async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
@@ -108,6 +106,12 @@ async def _close_abandoned_chains(session) -> None:
 
 async def _worker_loop() -> None:
     logger.info("Embedding worker started (poll interval: %ss)", settings.embedding_worker_poll_interval)
+    async with AsyncSessionLocal() as session:
+        job_repo = EmbeddingJobRepository(session)
+        recovered = await job_repo.recover_stale()
+        await session.commit()
+        if recovered:
+            logger.info("Recovered %d stale processing job(s)", recovered)
     while True:
         try:
             async with AsyncSessionLocal() as session:

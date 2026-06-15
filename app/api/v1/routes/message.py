@@ -186,33 +186,31 @@ async def send_message(
     job_repo = EmbeddingJobRepository(db)
     embedding_store = get_embedding_store(db)
 
+    # Capture chat id as a plain int — ORM objects expire after commit
+    _chat_id: int = chat.id
+
     # --- Resolve user ---
     user: User | None = None
     if payload.user_id is not None:
         user = await UserRepository(db).get_by_external_id(payload.user_id)
         if not user:
             raise HTTPException(404, "User not found")
+    _user_id: int | None = user.id if user else None
+    _username: str | None = user.username if user else None
 
-    # --- Chain lifecycle (gap detection) ---
-    chain = await _resolve_chain(
-        chat.id, user, message_repo, chain_repo, job_repo
-    )
-
-    # --- Flush pending embedding jobs for this chat before building context ---
+    # --- Flush pending /memory chain jobs before building context ---
     if payload.semantic_context and embedding_backend:
-        await flush_pending_for_chat(chat.id, db)
+        await flush_pending_for_chat(_chat_id, db)
 
-    # --- Layer 2: open chains from OTHER participants ---
-    all_open_chains = await chain_repo.get_open_chains_with_messages(chat.id)
+    # --- Layer 2: open chains — /memory flood messages from all participants ---
+    all_open_chains = await chain_repo.get_open_chains_with_messages(_chat_id)
     open_chains_block = _format_open_chains_block(
-        all_open_chains, current_chain_id=chain.id if chain else None
+        all_open_chains, current_chain_id=None
     )
 
-    # --- Current chain fragments (messages array prefix) ---
-    chain_messages: list[AgentMessage] = []
-    if chain:
-        prior = await message_repo.list_by_chain(chain.id)
-        chain_messages = [AgentMessage(role=Role(m.role), content=m.content) for m in prior]
+    # --- Layer 1: recent direct-call history (send_message exchanges, no chain_id) ---
+    prior_direct = await message_repo.list_direct(_chat_id, limit=20)
+    direct_msg_ids = {m.id for m in prior_direct}
 
     # --- Layer 3: semantic memories ---
     chain_msg_ids = {m.id for c in all_open_chains for m in c.messages}
@@ -220,21 +218,24 @@ async def send_message(
     cross_chat_memories: list[Message] = []
     if payload.semantic_context and embedding_backend:
         same_chat_memories, cross_chat_memories = await _fetch_memories(
-            chat.id, payload.content,
+            _chat_id, payload.content,
             message_repo, embedding_backend, embedding_store,
-            exclude_ids=chain_msg_ids,
+            exclude_ids=chain_msg_ids | direct_msg_ids,
         )
     memory_block = _format_memory_block(same_chat_memories, cross_chat_memories)
 
-    # --- Persist user message ---
+    # --- Transaction 1: commit user message so concurrent requests see it ---
     user_msg = await message_repo.create(
-        chat.id, Role.USER, payload.content,
-        user_id=user.id if user else None,
-        chain_id=chain.id if chain else None,
+        _chat_id, Role.USER, payload.content,
+        user_id=_user_id,
     )
+    user_msg_response = MessageResponse.model_validate(user_msg)
+    await db.commit()
 
-    # --- Layer 1: messages array = chain context + current message ---
-    messages_for_agent = chain_messages + [AgentMessage(role=Role.USER, content=payload.content)]
+    # --- Layer 1: history + current turn ---
+    messages_for_agent = [
+        AgentMessage(role=Role(m.role), content=m.content) for m in prior_direct
+    ] + [AgentMessage(role=Role.USER, content=payload.content)]
 
     # --- Generate response ---
     agent = get_agent(payload.agent)
@@ -242,18 +243,32 @@ async def send_message(
         messages_for_agent,
         open_chains_context=open_chains_block,
         memory_context=memory_block,
+        username=_username,
     )
 
-    # --- Persist assistant message + queue its embedding job ---
+    # --- Transaction 2: persist facts + assistant message ---
+    for tc in agent_response.tool_calls:
+        if tc.name == "save_fact":
+            fact_content = tc.arguments.get("content", "").strip()
+            if fact_content:
+                fact_msg = await message_repo.create(
+                    _chat_id, Role.ASSISTANT, fact_content,
+                    user_id=_user_id,
+                )
+                if embedding_backend:
+                    vectors = await embedding_backend.embed([fact_content])
+                    await get_embedding_store(db).upsert(
+                        fact_msg.id, vectors[0], embedding_backend.model_name
+                    )
+
     assistant_msg = await message_repo.create(
-        chat.id, Role.ASSISTANT, agent_response.content
+        _chat_id, Role.ASSISTANT, agent_response.content
     )
     await job_repo.create_for_message(assistant_msg.id)
-
     await db.commit()
 
     return SendMessageResponse(
-        user_message=MessageResponse.model_validate(user_msg),
+        user_message=user_msg_response,
         assistant_message=MessageResponse.model_validate(assistant_msg),
     )
 
@@ -278,17 +293,30 @@ async def add_memory_message(
             raise HTTPException(404, "User not found")
 
     message_repo = MessageRepository(db)
-    msg = await message_repo.create(
-        chat.id, payload.role, payload.content,
-        user_id=user.id if user else None,
-    )
+    chain_repo = ChainRepository(db)
+    job_repo = EmbeddingJobRepository(db)
 
-    if embedding_backend and should_embed(payload.role, payload.content):
-        vectors = await embedding_backend.embed([payload.content])
-        store = get_embedding_store(db)
-        await store.upsert(msg.id, vectors[0], embedding_backend.model_name)
-    else:
+    if payload.role == "user" and user:
+        # Flood message from an identified participant — manage chain lifecycle.
+        # The chain (and all its messages) gets embedded by the worker on close.
+        chain = await _resolve_chain(chat.id, user, message_repo, chain_repo, job_repo)
+        msg = await message_repo.create(
+            chat.id, payload.role, payload.content,
+            user_id=user.id,
+            chain_id=chain.id if chain else None,
+        )
         await db.commit()
+    else:
+        # Non-participant message (assistant import, anonymous) — embed directly.
+        msg = await message_repo.create(
+            chat.id, payload.role, payload.content,
+            user_id=user.id if user else None,
+        )
+        if embedding_backend and should_embed(payload.role, payload.content):
+            vectors = await embedding_backend.embed([payload.content])
+            await get_embedding_store(db).upsert(msg.id, vectors[0], embedding_backend.model_name)
+        else:
+            await db.commit()
 
     return MessageResponse.model_validate(msg)
 

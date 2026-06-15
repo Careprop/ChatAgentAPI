@@ -1,8 +1,19 @@
 from app.agent.embedding.base import EmbeddingBackend
 
+_backend: EmbeddingBackend | None = None
+_init_attempted = False
 
-def create_embedding_backend() -> EmbeddingBackend | None:
-    """Return the configured embedding backend, or None if not available."""
+
+def get_embedding_backend() -> EmbeddingBackend | None:
+    """Return the configured embedding backend (process-wide singleton)."""
+    global _backend, _init_attempted
+    if not _init_attempted:
+        _init_attempted = True
+        _backend = _create()
+    return _backend
+
+
+def _create() -> EmbeddingBackend | None:
     from app.config.settings import settings
 
     backend = settings.embedding_backend.lower()

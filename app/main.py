@@ -17,6 +17,7 @@ from app.api.v1.routes.agent import router as agent_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.message import router as message_router
 from app.api.v1.routes.user import router as user_router
+from app.config.settings import settings
 from app.worker.embedding import start_worker
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker_task = start_worker()
+    worker_task = start_worker() if settings.worker_enabled else None
     yield
-    worker_task.cancel()
+    if worker_task:
+        worker_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -71,3 +73,5 @@ async def _handle_agent_provider_error(request: Request, exc: AgentProviderError
 async def _handle_agent_error(request: Request, exc: AgentError) -> JSONResponse:
     logger.error("Unexpected agent error: %s", exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal agent error"})
+
+

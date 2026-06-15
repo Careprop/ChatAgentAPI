@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,25 @@ class EmbeddingJobRepository:
         await self._session.flush()
         return job
 
+    async def recover_stale(self, *, stale_after_seconds: int = 600) -> int:
+        """Reset jobs stuck in processing for longer than stale_after_seconds back to pending.
+
+        Safe when multiple worker instances run concurrently: only jobs whose
+        processing_started_at is older than the timeout are reset, leaving
+        jobs actively owned by another live instance untouched.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
+        result = await self._session.execute(
+            update(EmbeddingJob)
+            .where(
+                EmbeddingJob.status == JobStatus.PROCESSING,
+                (EmbeddingJob.processing_started_at.is_(None))
+                | (EmbeddingJob.processing_started_at < cutoff),
+            )
+            .values(status=JobStatus.PENDING, processing_started_at=None)
+        )
+        return result.rowcount
+
     async def claim_pending(self, *, limit: int = 10) -> list[EmbeddingJob]:
         """Atomically claim pending jobs — safe for concurrent workers."""
         result = await self._session.execute(
@@ -40,7 +59,10 @@ class EmbeddingJobRepository:
             await self._session.execute(
                 update(EmbeddingJob)
                 .where(EmbeddingJob.id.in_(ids))
-                .values(status=JobStatus.PROCESSING)
+                .values(
+                    status=JobStatus.PROCESSING,
+                    processing_started_at=datetime.now(timezone.utc),
+                )
             )
         return jobs
 
@@ -72,7 +94,10 @@ class EmbeddingJobRepository:
             await self._session.execute(
                 update(EmbeddingJob)
                 .where(EmbeddingJob.id.in_(ids))
-                .values(status=JobStatus.PROCESSING)
+                .values(
+                    status=JobStatus.PROCESSING,
+                    processing_started_at=datetime.now(timezone.utc),
+                )
             )
         return jobs
 

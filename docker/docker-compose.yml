@@ -18,8 +18,23 @@ services:
     container_name: agent_api
     env_file:
       - ../.env
+    environment:
+      WORKER_ENABLED: "false"
     ports:
       - "8000:8000"
+    depends_on:
+      - db
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: agent_worker
+    command: python -m app.worker
+    env_file:
+      - ../.env
+    environment:
+      WORKER_ENABLED: "false"
     depends_on:
       - db
 
