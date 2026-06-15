@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid7
 
@@ -13,6 +14,11 @@ if TYPE_CHECKING:
     from app.db.models.chain import MessageChain
     from app.db.models.message_embedding import MessageEmbedding
     from app.db.models.user import User
+
+
+class MessageType(StrEnum):
+    MESSAGE = "message"
+    FACT = "fact"
 
 
 class Message(Base, TimestampMixin):
@@ -47,6 +53,7 @@ class Message(Base, TimestampMixin):
     )
 
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str] = mapped_column(Text, nullable=False, default=MessageType.MESSAGE)
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
 

@@ -2,20 +2,20 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.schemas import AgentProvider
 
 
 class SendMessageRequest(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=32_000)
     user_id: uuid.UUID | None = None
     agent: AgentProvider = AgentProvider.OPENAI
     semantic_context: bool = True
 
 
 class AddMemoryRequest(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=32_000)
     role: Literal["user", "assistant"] = "user"
     user_id: uuid.UUID | None = None
 

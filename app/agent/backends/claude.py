@@ -40,7 +40,7 @@ class ClaudeBackend(AgentBackend):
 
         params: dict = {
             "model": self._model,
-            "max_tokens": 8096,
+            "max_tokens": settings.anthropic_max_tokens,
             "messages": chat_messages,
         }
         if instructions:

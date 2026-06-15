@@ -16,8 +16,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    from app.config.settings import settings
-    dims = settings.embedding_dimensions
+    dims = 384  # paraphrase-multilingual-MiniLM-L12-v2 output size
 
     # Drop HNSW index — it is bound to the column type and must be recreated.
     op.drop_index("ix_message_embeddings_hnsw", table_name="message_embeddings")

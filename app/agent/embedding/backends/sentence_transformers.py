@@ -25,7 +25,7 @@ class SentenceTransformersBackend(EmbeddingBackend):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _encode() -> list[list[float]]:
             self._load()

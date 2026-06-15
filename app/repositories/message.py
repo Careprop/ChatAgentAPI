@@ -1,10 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.db.models.message import Message
+from app.db.models.message import Message, MessageType
 
 
 class MessageRepository:
@@ -32,6 +32,7 @@ class MessageRepository:
         *,
         user_id: int | None = None,
         chain_id: int | None = None,
+        message_type: str = MessageType.MESSAGE,
     ) -> Message:
         seq = await self._next_sequence(chat_id)
         message = Message(
@@ -41,6 +42,7 @@ class MessageRepository:
             sequence=seq,
             user_id=user_id,
             chain_id=chain_id,
+            message_type=message_type,
         )
         self.session.add(message)
         await self.session.flush()
@@ -60,12 +62,13 @@ class MessageRepository:
         return result.scalar_one_or_none()
 
     async def list_direct(self, chat_id: int, *, limit: int) -> list[Message]:
-        """Recent messages not in any chain — direct agent-call exchanges."""
+        """Recent conversational messages — excludes facts and chain messages."""
         result = await self.session.execute(
             select(Message)
             .where(
                 Message.chat_id == chat_id,
                 Message.chain_id.is_(None),
+                Message.message_type == MessageType.MESSAGE,
             )
             .order_by(Message.sequence.desc())
             .limit(limit)
@@ -114,3 +117,30 @@ class MessageRepository:
             .options(joinedload(Message.user))
         )
         return list(result.scalars().all())
+
+    async def trim_old_facts(self, chat_id: int, user_id: int, max_count: int) -> int:
+        """Delete oldest facts over max_count for this user in this chat. Returns count deleted."""
+        keep_result = await self.session.execute(
+            select(Message.id)
+            .where(
+                Message.chat_id == chat_id,
+                Message.user_id == user_id,
+                Message.message_type == MessageType.FACT,
+            )
+            .order_by(Message.id.desc())
+            .limit(max_count)
+        )
+        keep_ids = list(keep_result.scalars().all())
+        if not keep_ids:
+            return 0
+        result = await self.session.execute(
+            delete(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.user_id == user_id,
+                Message.message_type == MessageType.FACT,
+                Message.id.not_in(keep_ids),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount

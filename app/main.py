@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.agent.exceptions import (
     AgentAuthError,
@@ -13,25 +15,23 @@ from app.agent.exceptions import (
     AgentRateLimitError,
     AgentTimeoutError,
 )
+from app.api.v1.dependencies.rate_limit import limiter
 from app.api.v1.routes.agent import router as agent_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.message import router as message_router
 from app.api.v1.routes.user import router as user_router
-from app.config.settings import settings
-from app.worker.embedding import start_worker
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker_task = start_worker() if settings.worker_enabled else None
     yield
-    if worker_task:
-        worker_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(agent_router)
 app.include_router(chat_router)

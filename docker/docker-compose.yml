@@ -10,6 +10,32 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: agent_worker
+    env_file:
+      - ../.env
+    expose:
+      - "8001"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
 
   api:
     build:
@@ -18,25 +44,14 @@ services:
     container_name: agent_api
     env_file:
       - ../.env
-    environment:
-      WORKER_ENABLED: "false"
     ports:
       - "8000:8000"
     depends_on:
-      - db
-
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: agent_worker
-    command: python -m app.worker
-    env_file:
-      - ../.env
-    environment:
-      WORKER_ENABLED: "false"
-    depends_on:
-      - db
+      db:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  hf_cache:

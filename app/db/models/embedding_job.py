@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,7 +10,7 @@ from app.db.base import Base
 from app.db.mixins.timestamps import TimestampMixin
 
 
-class JobStatus:
+class JobStatus(StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     DONE = "done"

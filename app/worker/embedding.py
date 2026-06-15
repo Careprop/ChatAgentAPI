@@ -5,6 +5,7 @@ from app.agent.embedding.base import should_embed
 from app.agent.embedding.stores.pgvector import PgvectorStore
 from app.config.settings import settings
 from app.db.models.embedding_job import EmbeddingJob
+from app.db.models.message import MessageType
 from app.db.session import AsyncSessionLocal
 from app.repositories.chain import ChainRepository
 from app.repositories.embedding_job import EmbeddingJobRepository
@@ -12,25 +13,42 @@ from app.repositories.message import MessageRepository
 
 logger = logging.getLogger(__name__)
 
-_warned_no_backend = False
+_backend = None
+_backend_initialized = False
 
 
 def _get_backend():
-    global _warned_no_backend
-    from app.agent.embedding.factory import get_embedding_backend
-    backend = get_embedding_backend()
-    if backend is None and not _warned_no_backend:
-        _warned_no_backend = True
+    """Return the worker-local embedding backend (singleton, loaded once)."""
+    global _backend, _backend_initialized
+    if _backend_initialized:
+        return _backend
+    _backend_initialized = True
+    from app.config.settings import settings
+    name = settings.embedding_backend.lower()
+    if name == "sentence_transformers":
+        from app.agent.embedding.backends.sentence_transformers import SentenceTransformersBackend
+        _backend = SentenceTransformersBackend(settings.st_model)
+    elif name == "openai":
+        if settings.openai_api_key:
+            from app.agent.embedding.backends.openai import OpenAIEmbeddingBackend
+            _backend = OpenAIEmbeddingBackend()
+    if _backend is None:
         logger.warning("No embedding backend configured — worker will skip jobs")
-    return backend
+    return _backend
 
 
-async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
-    """Process a list of already-claimed embedding jobs using the given session."""
+async def process_jobs(jobs: list[EmbeddingJob], session, backend=None) -> None:
+    """Process a list of already-claimed embedding jobs using the given session.
+
+    Pass ``backend`` explicitly when calling from a context that has its own
+    embedding backend (e.g. the API flushing jobs via RemoteEmbeddingBackend).
+    When omitted, falls back to the worker-local backend.
+    """
     if not jobs:
         return
 
-    backend = _get_backend()
+    if backend is None:
+        backend = _get_backend()
     if backend is None:
         return
     job_repo = EmbeddingJobRepository(session)
@@ -59,6 +77,22 @@ async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
                 vectors = await backend.embed([text])
                 await store.upsert(target_id, vectors[0], backend.model_name)
 
+                # Safety cap: trim oldest facts when a user exceeds the limit.
+                if (
+                    job.message_id is not None
+                    and msg is not None
+                    and msg.message_type == MessageType.FACT
+                    and msg.user_id is not None
+                ):
+                    deleted = await message_repo.trim_old_facts(
+                        msg.chat_id, msg.user_id, settings.facts_per_user_limit
+                    )
+                    if deleted:
+                        logger.info(
+                            "Trimmed %d old fact(s) for user_id=%d in chat_id=%d",
+                            deleted, msg.user_id, msg.chat_id,
+                        )
+
             if job.chain_id is not None:
                 await chain_repo.mark_embedded(job.chain_id)
 
@@ -79,11 +113,16 @@ async def process_jobs(jobs: list[EmbeddingJob], session) -> None:
                 logger.exception("Failed to record job failure for job %d", job.id)
 
 
-async def flush_pending_for_chat(chat_id: int, session) -> None:
-    """Synchronously process all pending jobs for a chat before context building."""
-    job_repo = EmbeddingJobRepository(session)
-    jobs = await job_repo.claim_pending_for_chat(chat_id, limit=50)
-    await process_jobs(jobs, session)
+async def flush_pending_for_chat(chat_id: int, backend=None) -> None:
+    """Process all pending jobs for a chat before context building.
+
+    Pass ``backend`` when calling from the API so jobs are embedded via
+    RemoteEmbeddingBackend instead of the worker-local backend.
+    """
+    async with AsyncSessionLocal() as session:
+        job_repo = EmbeddingJobRepository(session)
+        jobs = await job_repo.claim_pending_for_chat(chat_id, limit=50)
+        await process_jobs(jobs, session, backend=backend)
 
 
 async def _close_abandoned_chains(session) -> None:

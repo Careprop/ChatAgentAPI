@@ -25,7 +25,11 @@ def _create() -> EmbeddingBackend | None:
         return OpenAIEmbeddingBackend()
 
     if backend == "sentence_transformers":
-        from app.agent.embedding.backends.sentence_transformers import SentenceTransformersBackend
-        return SentenceTransformersBackend(settings.st_model)
+        from app.agent.embedding.backends.remote import RemoteEmbeddingBackend
+        return RemoteEmbeddingBackend(
+            settings.worker_embed_url,
+            settings.st_model,
+            api_key=settings.effective_worker_api_key,
+        )
 
     return None

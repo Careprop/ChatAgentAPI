@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import Optional, Sequence
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ class ChatRepository:
         chat = Chat(title=title)
 
         self.session.add(chat)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(chat)
 
         return chat
@@ -47,13 +47,13 @@ class ChatRepository:
         chat.deleted_at = datetime.now(UTC)
 
         self.session.add(chat)
-        await self.session.commit()
+        await self.session.flush()
 
     async def update_title(self, chat: Chat, title: str) -> Chat:
         chat.title = title
 
         self.session.add(chat)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(chat)
 
         return chat

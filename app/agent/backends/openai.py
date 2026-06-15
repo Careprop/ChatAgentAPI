@@ -44,6 +44,7 @@ class OpenAIBackend(AgentBackend):
                 for message in messages
             ],
             "store": False,
+            "max_output_tokens": settings.openai_max_tokens,
         }
 
         if instructions is not None:

@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.auth import verify_api_key
 from app.api.v1.dependencies.db import get_db
+from app.api.v1.dependencies.rate_limit import limiter
 from app.api.v1.schemas.chat import (
     ChatCreate,
     ChatResponse
@@ -21,14 +22,17 @@ router = APIRouter(
     path="",
     response_model=ChatResponse
 )
+@limiter.limit("60/minute")
 async def create_chat(
+    request: Request,
     payload: ChatCreate,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key)
 ):
     repo = ChatRepository(db)
-
-    return await repo.create(payload.title)
+    chat = await repo.create(payload.title)
+    await db.commit()
+    return chat
 
 
 @router.get(

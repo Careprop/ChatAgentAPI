@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Text
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from app.db.models.user import User
 
 
-class ChainStatus:
+class ChainStatus(StrEnum):
     OPEN = "open"
     CLOSED = "closed"
     EMBEDDED = "embedded"

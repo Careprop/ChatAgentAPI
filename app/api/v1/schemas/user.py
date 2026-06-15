@@ -1,11 +1,11 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserCreate(BaseModel):
-    username: str
+    username: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class UserResponse(BaseModel):

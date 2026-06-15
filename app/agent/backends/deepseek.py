@@ -43,7 +43,7 @@ class DeepSeekBackend(AgentBackend):
             {"role": m.role.value, "content": m.content} for m in messages
         )
 
-        params: dict = {"model": self._model, "messages": all_messages}
+        params: dict = {"model": self._model, "messages": all_messages, "max_tokens": settings.deepseek_max_tokens}
         if temperature is not None:
             params["temperature"] = temperature
         if tools:
