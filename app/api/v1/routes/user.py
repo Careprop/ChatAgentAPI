@@ -28,6 +28,19 @@ async def create_user(
     return UserResponse.model_validate(user)
 
 
+@router.get("", response_model=UserResponse)
+async def get_user_by_username(
+    username: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_api_key),
+):
+    repo = UserRepository(db)
+    user = await repo.get_by_username(username)
+    if not user:
+        raise HTTPException(404, "User not found")
+    return UserResponse.model_validate(user)
+
+
 @router.get("/{external_id}", response_model=UserResponse)
 async def get_user(
     external_id: uuid.UUID,

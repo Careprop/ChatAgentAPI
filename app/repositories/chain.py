@@ -75,14 +75,24 @@ class ChainRepository:
         return list(result.scalars().all())
 
     async def get_open_chains_with_messages(
-        self, chat_id: int
+        self, chat_id: int, max_age_seconds: int = 300
     ) -> list[MessageChain]:
-        from app.db.models.user import User
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+
+        last_msg = (
+            select(Message.chain_id, func.max(Message.created_at).label("last_at"))
+            .where(Message.chain_id.isnot(None))
+            .group_by(Message.chain_id)
+            .subquery()
+        )
+
         result = await self._session.execute(
             select(MessageChain)
+            .outerjoin(last_msg, last_msg.c.chain_id == MessageChain.id)
             .where(
                 MessageChain.chat_id == chat_id,
                 MessageChain.status == ChainStatus.OPEN,
+                func.coalesce(last_msg.c.last_at, MessageChain.opened_at) >= cutoff,
             )
             .options(
                 selectinload(MessageChain.messages).selectinload(Message.user),

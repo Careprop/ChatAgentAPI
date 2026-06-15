@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,12 +12,15 @@ class SendMessageRequest(BaseModel):
     user_id: uuid.UUID | None = None
     agent: AgentProvider = AgentProvider.OPENAI
     semantic_context: bool = True
+    cross_chat_context: bool = True
+    metadata: dict[str, Any] | None = None
 
 
 class AddMemoryRequest(BaseModel):
     content: str = Field(min_length=1, max_length=32_000)
     role: Literal["user", "assistant"] = "user"
     user_id: uuid.UUID | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class MessageResponse(BaseModel):
@@ -26,10 +29,19 @@ class MessageResponse(BaseModel):
     content: str
     sequence: int
     created_at: datetime
+    metadata: dict[str, Any] | None = Field(None, validation_alias="msg_metadata")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class SendMessageResponse(BaseModel):
     user_message: MessageResponse
     assistant_message: MessageResponse
+
+
+class MemoryFlushRequest(BaseModel):
+    user_id: uuid.UUID
+
+
+class MemoryFlushResponse(BaseModel):
+    closed: bool

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
 
     # Seconds of silence after which a participant's chain is auto-closed
     chain_gap_seconds: int = 5
+    # Open chains with no activity for longer than this are excluded from Layer 2 context
+    max_chain_age_seconds: int = 300
 
     # Embedding worker (used by worker service only)
     embedding_worker_poll_interval: float = 2.0

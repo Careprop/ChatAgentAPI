@@ -33,6 +33,7 @@ class MessageRepository:
         user_id: int | None = None,
         chain_id: int | None = None,
         message_type: str = MessageType.MESSAGE,
+        metadata: dict | None = None,
     ) -> Message:
         seq = await self._next_sequence(chat_id)
         message = Message(
@@ -43,6 +44,7 @@ class MessageRepository:
             user_id=user_id,
             chain_id=chain_id,
             message_type=message_type,
+            msg_metadata=metadata,
         )
         self.session.add(message)
         await self.session.flush()
@@ -75,15 +77,15 @@ class MessageRepository:
         )
         return list(reversed(result.scalars().all()))
 
-    async def list_by_chat(self, chat_id: int, *, limit: int) -> list[Message]:
-        result = await self.session.execute(
-            select(Message)
-            .where(Message.chat_id == chat_id)
-            .order_by(Message.sequence.desc())
-            .limit(limit)
-        )
-        rows = result.scalars().all()
-        return list(reversed(rows))
+    async def list_by_chat(
+        self, chat_id: int, *, limit: int = 50, before_sequence: int | None = None
+    ) -> list[Message]:
+        q = select(Message).where(Message.chat_id == chat_id)
+        if before_sequence is not None:
+            q = q.where(Message.sequence < before_sequence)
+        q = q.order_by(Message.sequence.desc()).limit(limit)
+        result = await self.session.execute(q)
+        return list(reversed(result.scalars().all()))
 
     async def list_by_chain(self, chain_id: int) -> list[Message]:
         result = await self.session.execute(

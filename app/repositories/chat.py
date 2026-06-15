@@ -1,5 +1,4 @@
 from uuid import UUID
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,12 +33,14 @@ class ChatRepository:
 
         return result.scalar_one_or_none()
 
-    async def list_active(self) -> Sequence[Chat]:
+    async def list_active(self, *, limit: int = 100) -> list[Chat]:
         result = await self.session.execute(
-            select(Chat).where(Chat.deleted_at.is_(None))
+            select(Chat)
+            .where(Chat.deleted_at.is_(None))
+            .order_by(Chat.id.desc())
+            .limit(limit)
         )
-
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def delete(self, chat: Chat) -> None:
         from datetime import datetime, UTC

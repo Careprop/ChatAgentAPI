@@ -4,8 +4,9 @@ import math
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.embedding.base import EmbeddingBackend, should_embed
@@ -17,7 +18,14 @@ from app.api.v1.dependencies.auth import verify_api_key
 from app.api.v1.dependencies.db import get_db
 from app.api.v1.dependencies.embedding import get_embedding_backend, get_embedding_store
 from app.api.v1.dependencies.rate_limit import limiter
-from app.api.v1.schemas.message import AddMemoryRequest, MessageResponse, SendMessageRequest, SendMessageResponse
+from app.api.v1.schemas.message import (
+    AddMemoryRequest,
+    MemoryFlushRequest,
+    MemoryFlushResponse,
+    MessageResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+)
 from app.config.settings import settings
 from app.db.models.chain import MessageChain
 from app.db.models.message import Message
@@ -220,6 +228,8 @@ async def _fetch_memories(
     embedding_backend: EmbeddingBackend,
     embedding_store: PgvectorStore,
     exclude_ids: set[int],
+    *,
+    cross_chat_context: bool = True,
 ) -> tuple[list[Message], list[Message], list[Message]]:
     """Returns (facts, same_chat_memories, cross_chat_memories)."""
     if not should_embed(Role.USER, current_content):
@@ -247,7 +257,7 @@ async def _fetch_memories(
         )
 
         cross: list[Message] = []
-        if settings.cross_chat_semantic_limit > 0:
+        if cross_chat_context and settings.cross_chat_semantic_limit > 0:
             cross_ids = await embedding_store.search_other_chats(
                 chat_id, query_vec, k=settings.cross_chat_semantic_limit
             )
@@ -301,7 +311,7 @@ async def send_message(
     if _user_id is not None:
         if not await _claim_user(_user_id):
             raise HTTPException(
-                429,
+                409,
                 "Another request is already being processed for this user. Please wait and retry.",
             )
 
@@ -311,7 +321,9 @@ async def send_message(
             await flush_pending_for_chat(_chat_id, backend=embedding_backend)
 
         # --- Layer 2: open chains — /memory flood messages from all participants ---
-        all_open_chains = await chain_repo.get_open_chains_with_messages(_chat_id)
+        all_open_chains = await chain_repo.get_open_chains_with_messages(
+            _chat_id, max_age_seconds=settings.max_chain_age_seconds
+        )
         open_chains_block = _format_open_chains_block(
             all_open_chains, current_chain_id=None
         )
@@ -330,6 +342,7 @@ async def send_message(
                 _chat_id, _user_id, payload.content,
                 message_repo, embedding_backend, embedding_store,
                 exclude_ids=chain_msg_ids | direct_msg_ids,
+                cross_chat_context=payload.cross_chat_context,
             )
         memory_block = _format_memory_block(facts, same_chat_memories, cross_chat_memories)
 
@@ -337,6 +350,7 @@ async def send_message(
         user_msg = await message_repo.create(
             _chat_id, Role.USER, payload.content,
             user_id=_user_id,
+            metadata=payload.metadata,
         )
         user_msg_response = MessageResponse.model_validate(user_msg)
         await db.commit()
@@ -415,12 +429,14 @@ async def add_memory_message(
             chat.id, payload.role, payload.content,
             user_id=user.id,
             chain_id=chain.id if chain else None,
+            metadata=payload.metadata,
         )
     else:
         # Non-participant message (assistant import, anonymous) — queued for embedding.
         msg = await message_repo.create(
             chat.id, payload.role, payload.content,
             user_id=user.id if user else None,
+            metadata=payload.metadata,
         )
         if embedding_backend and should_embed(payload.role, payload.content):
             await job_repo.create_for_message(msg.id)
@@ -429,9 +445,40 @@ async def add_memory_message(
     return MessageResponse.model_validate(msg)
 
 
+@router.post("/memory/flush", response_model=MemoryFlushResponse)
+async def flush_memory_chain(
+    chat_external_id: uuid.UUID,
+    payload: MemoryFlushRequest,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_api_key),
+):
+    """Close a user's open chain immediately without waiting for the idle timeout."""
+    chat_repo = ChatRepository(db)
+    chat = await chat_repo.get_by_external_id(chat_external_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found")
+
+    user = await UserRepository(db).get_by_external_id(payload.user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    chain_repo = ChainRepository(db)
+    chain = await chain_repo.get_open_chain(chat.id, user.id)
+    if chain is None:
+        return MemoryFlushResponse(closed=False)
+
+    job_repo = EmbeddingJobRepository(db)
+    await chain_repo.close(chain.id)
+    await job_repo.create_for_chain(chain.id)
+    await db.commit()
+    return MemoryFlushResponse(closed=True)
+
+
 @router.get("", response_model=list[MessageResponse])
 async def list_messages(
     chat_external_id: uuid.UUID,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before_sequence: Annotated[int | None, Query(ge=1)] = None,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),
 ):
@@ -441,5 +488,7 @@ async def list_messages(
         raise HTTPException(404, "Chat not found")
 
     message_repo = MessageRepository(db)
-    messages = await message_repo.list_by_chat(chat.id, limit=200)
+    messages = await message_repo.list_by_chat(
+        chat.id, limit=limit, before_sequence=before_sequence
+    )
     return [MessageResponse.model_validate(m) for m in messages]

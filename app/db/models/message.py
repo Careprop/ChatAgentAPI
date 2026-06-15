@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid7
 
 from sqlalchemy import BigInteger, ForeignKey, Index, Integer, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -56,6 +57,10 @@ class Message(Base, TimestampMixin):
     message_type: Mapped[str] = mapped_column(Text, nullable=False, default=MessageType.MESSAGE)
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    msg_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
 
     # Monotonically increasing position within the chat, assigned at insert time.
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
