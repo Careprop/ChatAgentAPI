@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 @limiter.limit("60/minute")
 async def create_chat(
     request: Request,
+    response: Response,
     payload: ChatCreate,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),

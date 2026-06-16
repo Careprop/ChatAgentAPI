@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.embedding.base import EmbeddingBackend, should_embed
@@ -308,6 +308,7 @@ async def _fetch_memories(
 @limiter.limit("60/minute", key_func=_chat_rate_key)
 async def send_message(
     request: Request,
+    response: Response,
     chat_external_id: uuid.UUID,
     payload: SendMessageRequest,
     db: AsyncSession = Depends(get_db),
@@ -464,6 +465,7 @@ async def send_message(
 @limiter.limit("300/minute")
 async def add_memory_message(
     request: Request,
+    response: Response,
     chat_external_id: uuid.UUID,
     payload: AddMemoryRequest,
     db: AsyncSession = Depends(get_db),

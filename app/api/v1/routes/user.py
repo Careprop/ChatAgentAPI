@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.auth import verify_api_key
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 @limiter.limit("60/minute")
 async def create_user(
     request: Request,
+    response: Response,
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),

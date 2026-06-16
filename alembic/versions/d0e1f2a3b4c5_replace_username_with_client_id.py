@@ -14,10 +14,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_column('users', 'username')
-    op.add_column('users', sa.Column('client_id', sa.String(128), nullable=False))
+    # Add nullable first so existing rows don't violate NOT NULL
+    op.add_column('users', sa.Column('client_id', sa.String(128), nullable=True))
+    # Backfill existing rows using external_id as a stable unique value
+    op.execute("UPDATE users SET client_id = external_id::text WHERE client_id IS NULL")
+    op.alter_column('users', 'client_id', nullable=False)
     op.create_unique_constraint('uq_users_client_id', 'users', ['client_id'])
     op.add_column('users', sa.Column('display_name', sa.String(256), nullable=True))
+    op.drop_column('users', 'username')
 
 
 def downgrade() -> None:
