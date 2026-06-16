@@ -1,3 +1,4 @@
+import math
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -7,13 +8,15 @@ from sqlalchemy.orm import joinedload
 from app.db.models.message import Message, MessageType
 
 
+def _estimate_tokens(content: str) -> int:
+    return max(1, math.ceil(len(content) / 4))
+
+
 class MessageRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
     async def _next_sequence(self, chat_id: int) -> int:
-        # Advisory lock serializes sequence allocation per chat without conflicting
-        # with FK-triggered ShareLocks that a SELECT…FOR UPDATE would deadlock against.
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(:chat_id)"), {"chat_id": chat_id}
         )
@@ -31,7 +34,6 @@ class MessageRepository:
         content: str,
         *,
         user_id: int | None = None,
-        chain_id: int | None = None,
         message_type: str = MessageType.MESSAGE,
         metadata: dict | None = None,
     ) -> Message:
@@ -42,8 +44,8 @@ class MessageRepository:
             content=content,
             sequence=seq,
             user_id=user_id,
-            chain_id=chain_id,
             message_type=message_type,
+            token_count=_estimate_tokens(content),
             msg_metadata=metadata,
         )
         self.session.add(message)
@@ -57,25 +59,40 @@ class MessageRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_id(self, message_id: int) -> Message | None:
-        result = await self.session.execute(
-            select(Message).where(Message.id == message_id)
-        )
-        return result.scalar_one_or_none()
+    async def list_for_context(self, chat_id: int, *, token_budget: int) -> list[Message]:
+        """Recent MESSAGE-type messages fitting within token_budget (oldest-first).
 
-    async def list_direct(self, chat_id: int, *, limit: int) -> list[Message]:
-        """Recent conversational messages — excludes facts and chain messages."""
-        result = await self.session.execute(
-            select(Message)
+        Uses a SQL window function to compute a running token sum newest-first,
+        then keeps only rows where the cumulative total stays within the budget.
+        Two queries: one for IDs, one to load full ORM objects with user joined.
+        """
+        running = func.sum(Message.token_count).over(
+            order_by=Message.id.desc()
+        ).label("running_total")
+
+        subq = (
+            select(Message.id, running)
             .where(
                 Message.chat_id == chat_id,
-                Message.chain_id.is_(None),
                 Message.message_type == MessageType.MESSAGE,
             )
-            .order_by(Message.sequence.desc())
-            .limit(limit)
+            .subquery()
         )
-        return list(reversed(result.scalars().all()))
+
+        ids_result = await self.session.execute(
+            select(subq.c.id).where(subq.c.running_total <= token_budget)
+        )
+        ids = list(ids_result.scalars().all())
+        if not ids:
+            return []
+
+        result = await self.session.execute(
+            select(Message)
+            .where(Message.id.in_(ids))
+            .options(joinedload(Message.user))
+            .order_by(Message.id.asc())
+        )
+        return list(result.scalars().all())
 
     async def list_by_chat(
         self, chat_id: int, *, limit: int = 50, before_sequence: int | None = None
@@ -87,46 +104,55 @@ class MessageRepository:
         result = await self.session.execute(q)
         return list(reversed(result.scalars().all()))
 
-    async def list_by_chain(self, chain_id: int) -> list[Message]:
+    async def delete_facts_by_external_ids(
+        self, external_ids: list[str], user_id: int, chat_id: int
+    ) -> int:
+        parsed: list[UUID] = []
+        for eid in external_ids:
+            try:
+                parsed.append(UUID(str(eid)))
+            except (ValueError, AttributeError):
+                continue
+        if not parsed:
+            return 0
         result = await self.session.execute(
-            select(Message)
-            .where(Message.chain_id == chain_id)
-            .options(joinedload(Message.user))
-            .order_by(Message.sequence)
+            delete(Message)
+            .where(
+                Message.external_id.in_(parsed),
+                Message.user_id == user_id,
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.FACT,
+            )
+            .execution_options(synchronize_session=False)
         )
-        return list(result.scalars().all())
+        return result.rowcount
 
-    async def get_last_by_user(
-        self, chat_id: int, user_id: int
-    ) -> Message | None:
+    async def list_recent_facts(
+        self,
+        user_id: int,
+        chat_id: int,
+        *,
+        limit: int,
+    ) -> list[Message]:
+        """Most recent personal facts for a user scoped to this chat, oldest-first for context."""
         result = await self.session.execute(
             select(Message)
             .where(
-                Message.chat_id == chat_id,
                 Message.user_id == user_id,
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.FACT,
             )
-            .order_by(Message.sequence.desc())
-            .limit(1)
+            .order_by(Message.id.desc())
+            .limit(limit)
         )
-        return result.scalar_one_or_none()
+        return list(reversed(result.scalars().all()))
 
-    async def get_by_ids(self, ids: list[int]) -> list[Message]:
-        if not ids:
-            return []
-        result = await self.session.execute(
-            select(Message)
-            .where(Message.id.in_(ids))
-            .options(joinedload(Message.user))
-        )
-        return list(result.scalars().all())
-
-    async def trim_old_facts(self, chat_id: int, user_id: int, max_count: int) -> int:
-        """Delete oldest facts over max_count for this user in this chat. Returns count deleted."""
+    async def trim_old_facts(self, user_id: int, chat_id: int, max_count: int) -> int:
         keep_result = await self.session.execute(
             select(Message.id)
             .where(
-                Message.chat_id == chat_id,
                 Message.user_id == user_id,
+                Message.chat_id == chat_id,
                 Message.message_type == MessageType.FACT,
             )
             .order_by(Message.id.desc())
@@ -138,10 +164,69 @@ class MessageRepository:
         result = await self.session.execute(
             delete(Message)
             .where(
-                Message.chat_id == chat_id,
                 Message.user_id == user_id,
+                Message.chat_id == chat_id,
                 Message.message_type == MessageType.FACT,
                 Message.id.not_in(keep_ids),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount
+
+    async def list_chat_facts(self, chat_id: int, *, limit: int) -> list[Message]:
+        """Most recent shared facts for a chat, ordered oldest-first for context."""
+        result = await self.session.execute(
+            select(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.CHAT_FACT,
+            )
+            .order_by(Message.id.desc())
+            .limit(limit)
+        )
+        return list(reversed(result.scalars().all()))
+
+    async def trim_old_chat_facts(self, chat_id: int, max_count: int) -> int:
+        keep_result = await self.session.execute(
+            select(Message.id)
+            .where(
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.CHAT_FACT,
+            )
+            .order_by(Message.id.desc())
+            .limit(max_count)
+        )
+        keep_ids = list(keep_result.scalars().all())
+        if not keep_ids:
+            return 0
+        result = await self.session.execute(
+            delete(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.CHAT_FACT,
+                Message.id.not_in(keep_ids),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount
+
+    async def delete_chat_facts_by_external_ids(
+        self, external_ids: list[str], chat_id: int
+    ) -> int:
+        parsed: list[UUID] = []
+        for eid in external_ids:
+            try:
+                parsed.append(UUID(str(eid)))
+            except (ValueError, AttributeError):
+                continue
+        if not parsed:
+            return 0
+        result = await self.session.execute(
+            delete(Message)
+            .where(
+                Message.external_id.in_(parsed),
+                Message.chat_id == chat_id,
+                Message.message_type == MessageType.CHAT_FACT,
             )
             .execution_options(synchronize_session=False)
         )

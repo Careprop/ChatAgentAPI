@@ -2,7 +2,7 @@ from collections.abc import Sequence
 
 from app.agent.base import AgentBackend
 from app.agent.schemas import AgentMessage, AgentResponse
-from app.agent.tools import make_save_fact_tool
+from app.agent.tools import make_save_chat_fact_tool, make_save_fact_tool
 
 DEFAULT_INSTRUCTIONS = "You are a helpful assistant."
 
@@ -24,19 +24,21 @@ class Agent:
         messages: Sequence[AgentMessage],
         *,
         temperature: float | None = None,
-        open_chains_context: str | None = None,
         memory_context: str | None = None,
         save_facts: bool = True,
         username: str | None = None,
+        save_chat_facts: bool = True,
     ) -> AgentResponse:
         instructions = self._instructions
-        if open_chains_context:
-            instructions = f"{instructions}\n\n{open_chains_context}"
         if memory_context:
             instructions = f"{instructions}\n\n{memory_context}"
 
         kwargs = dict(instructions=instructions, temperature=temperature)
-        tools = [make_save_fact_tool(username)] if save_facts else None
+        tools: list | None = None
+        if save_facts:
+            tools = [make_save_fact_tool(username)]
+            if save_chat_facts:
+                tools.append(make_save_chat_fact_tool())
         response = await self._backend.generate(messages, **kwargs, tools=tools)
 
         # Some backends (e.g. Anthropic) stop after tool calls without a text reply.

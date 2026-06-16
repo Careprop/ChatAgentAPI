@@ -1,6 +1,6 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     container_name: agent_db
     environment:
       POSTGRES_DB: agent_lab
@@ -17,26 +17,6 @@ services:
       retries: 5
       start_period: 10s
 
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.worker
-    container_name: agent_worker
-    env_file:
-      - ../.env
-    expose:
-      - "8001"
-    volumes:
-      - hf_cache:/root/.cache/huggingface
-    depends_on:
-      - db
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 90s
-
   api:
     build:
       context: ..
@@ -49,9 +29,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      worker:
-        condition: service_healthy
 
 volumes:
   pgdata:
-  hf_cache:

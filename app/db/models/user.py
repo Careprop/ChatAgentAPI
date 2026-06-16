@@ -25,3 +25,4 @@ class User(Base, TimestampMixin):
 
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     token_window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)

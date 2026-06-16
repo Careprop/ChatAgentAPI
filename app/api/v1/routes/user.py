@@ -24,7 +24,7 @@ async def create_user(
     repo = UserRepository(db)
     if await repo.get_by_client_id(payload.client_id):
         raise HTTPException(409, "client_id already taken")
-    user = await repo.create(payload.client_id, display_name=payload.display_name)
+    user = await repo.create(payload.client_id, display_name=payload.display_name, token_budget=payload.token_budget)
     await db.commit()
     return UserResponse.model_validate(user)
 

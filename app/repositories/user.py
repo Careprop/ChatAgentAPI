@@ -12,8 +12,13 @@ class UserRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def create(self, client_id: str, display_name: str | None = None) -> User:
-        user = User(client_id=client_id, display_name=display_name)
+    async def create(
+        self,
+        client_id: str,
+        display_name: str | None = None,
+        token_budget: int | None = None,
+    ) -> User:
+        user = User(client_id=client_id, display_name=display_name, token_budget=token_budget)
         self._session.add(user)
         await self._session.flush()
         await self._session.refresh(user)
@@ -38,7 +43,7 @@ class UserRepository:
 
     async def check_token_budget(self, user: User) -> tuple[bool, int]:
         """Check whether user has budget remaining, resetting the window if it has expired.
-        Returns (allowed, retry_after_seconds). Call only when user.token_budget is not None."""
+        Returns (allowed, retry_after_seconds). Only call when user.token_budget is not None."""
         now = datetime.now(timezone.utc)
         window = timedelta(hours=settings.token_window_hours)
 
@@ -50,7 +55,7 @@ class UserRepository:
             return True, int(window.total_seconds())
 
         retry_after = max(1, int((user.token_window_start + window - now).total_seconds()))
-        return user.tokens_used < settings.token_budget, retry_after
+        return user.tokens_used < user.token_budget, retry_after
 
     async def add_tokens(self, user: User, count: int) -> None:
         user.tokens_used += count
