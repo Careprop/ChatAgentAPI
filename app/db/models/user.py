@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID, uuid7
 
-from sqlalchemy import BigInteger, String
+from sqlalchemy import BigInteger, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -21,3 +22,6 @@ class User(Base, TimestampMixin):
     client_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
 
     display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    token_window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     chain_gap_seconds: int = 5
     # Open chains with no activity for longer than this are excluded from Layer 2 context
     max_chain_age_seconds: int = 300
+    # Max simultaneous in-flight send_message requests per chat
+    max_chat_concurrent: int = 5
+    # Per-user token budget: max tokens per rolling window (future: override per user)
+    token_budget: int = 10_000
+    # Rolling window duration for per-user token budget (hours)
+    token_window_hours: int = 4
 
     # Embedding worker (used by worker service only)
     embedding_worker_poll_interval: float = 2.0

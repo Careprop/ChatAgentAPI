@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 
 from app.agent.base import AgentBackend
 from app.agent.exceptions import AgentAuthError, AgentProviderError, AgentRateLimitError, AgentTimeoutError
-from app.agent.schemas import AgentMessage, AgentResponse, ToolCall, ToolDefinition
+from app.agent.schemas import AgentMessage, AgentResponse, TokenUsage, ToolCall, ToolDefinition
 from app.config.settings import settings
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -76,9 +76,17 @@ class DeepSeekBackend(AgentBackend):
             for tc in (message.tool_calls or [])
         ]
 
+        usage = None
+        if response.usage:
+            usage = TokenUsage(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+            )
+
         return AgentResponse(
             content=message.content or "",
             model=response.model,
             tool_calls=tool_calls,
+            usage=usage,
             raw=response,
         )

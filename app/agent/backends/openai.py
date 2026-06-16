@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 
 from app.agent.base import AgentBackend
 from app.agent.exceptions import AgentAuthError, AgentProviderError, AgentRateLimitError, AgentTimeoutError
-from app.agent.schemas import AgentMessage, AgentResponse, ToolCall, ToolDefinition
+from app.agent.schemas import AgentMessage, AgentResponse, TokenUsage, ToolCall, ToolDefinition
 from app.config.settings import settings
 
 
@@ -79,9 +79,17 @@ class OpenAIBackend(AgentBackend):
             if item.type == "function_call"
         ]
 
+        usage = None
+        if response.usage:
+            usage = TokenUsage(
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
+
         return AgentResponse(
             content=response.output_text,
             model=response.model,
             tool_calls=tool_calls,
+            usage=usage,
             raw=response,
         )

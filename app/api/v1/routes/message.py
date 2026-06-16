@@ -3,7 +3,7 @@ import logging
 import math
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -25,6 +25,7 @@ from app.api.v1.schemas.message import (
     MessageResponse,
     SendMessageRequest,
     SendMessageResponse,
+    TokenBudgetUsage,
 )
 from app.config.settings import settings
 from app.db.models.chain import MessageChain
@@ -40,17 +41,19 @@ from app.worker.embedding import flush_pending_for_chat
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Per-user request serialization
+# Per-user and per-chat request concurrency guards
 # ---------------------------------------------------------------------------
-# Tracks user_ids that currently have an in-flight send_message call.
-# _active_lock serializes check-and-add so the operation is atomic.
+# _active_users: serializes requests per identified user (max 1 in-flight).
+# _active_chats: limits simultaneous requests per chat (max N in-flight).
+# Each dict/set is protected by its own lock so user and chat checks don't block each other.
 _active_users: set[int] = set()
 _active_lock = asyncio.Lock()
 
+_active_chats: dict[int, int] = {}  # chat_id -> in-flight count
+_chat_lock = asyncio.Lock()
+
 
 async def _claim_user(user_id: int) -> bool:
-    """Atomically try to claim the processing slot for user_id.
-    Returns True if claimed, False if another request is already in flight."""
     async with _active_lock:
         if user_id in _active_users:
             return False
@@ -61,6 +64,29 @@ async def _claim_user(user_id: int) -> bool:
 async def _release_user(user_id: int) -> None:
     async with _active_lock:
         _active_users.discard(user_id)
+
+
+async def _claim_chat(chat_id: int, max_concurrent: int) -> bool:
+    async with _chat_lock:
+        count = _active_chats.get(chat_id, 0)
+        if count >= max_concurrent:
+            return False
+        _active_chats[chat_id] = count + 1
+        return True
+
+
+async def _release_chat(chat_id: int) -> None:
+    async with _chat_lock:
+        count = _active_chats.get(chat_id, 1)
+        if count <= 1:
+            _active_chats.pop(chat_id, None)
+        else:
+            _active_chats[chat_id] = count - 1
+
+
+def _chat_rate_key(request: Request) -> str:
+    """slowapi key function: rate-limits by chat rather than by IP."""
+    return f"chat:{request.path_params.get('chat_external_id', 'unknown')}"
 
 
 _FACT_MAX_LEN = 500
@@ -279,6 +305,7 @@ async def _fetch_memories(
 
 @router.post("", response_model=SendMessageResponse)
 @limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_chat_rate_key)
 async def send_message(
     request: Request,
     chat_external_id: uuid.UUID,
@@ -312,14 +339,32 @@ async def send_message(
     _user_id: int | None = user.id if user else None
     _display_name: str | None = user.display_name if user else None
 
-    # --- Per-user serialization: only one in-flight request per identified user ---
-    if _user_id is not None:
-        if not await _claim_user(_user_id):
+    # --- Token budget pre-check (soft: allow if currently under limit) ---
+    if user is not None:
+        allowed, retry_after = await user_repo.check_token_budget(user)
+        if not allowed:
             raise HTTPException(
                 status_code=429,
-                detail="concurrent_request",
-                headers={"Retry-After": "1"},
+                detail="token_budget_exceeded",
+                headers={"Retry-After": str(retry_after)},
             )
+
+    # --- Chat-level concurrency: cap simultaneous LLM calls per chat ---
+    if not await _claim_chat(_chat_id, settings.max_chat_concurrent):
+        raise HTTPException(
+            status_code=429,
+            detail="chat_busy",
+            headers={"Retry-After": "1"},
+        )
+
+    # --- Per-user serialization: only one in-flight request per identified user ---
+    if _user_id is not None and not await _claim_user(_user_id):
+        await _release_chat(_chat_id)
+        raise HTTPException(
+            status_code=429,
+            detail="concurrent_request",
+            headers={"Retry-After": "1"},
+        )
 
     try:
         # --- Flush pending /memory chain jobs before building context ---
@@ -391,15 +436,28 @@ async def send_message(
             _chat_id, Role.ASSISTANT, agent_response.content
         )
         await job_repo.create_for_message(assistant_msg.id)
+
+        token_usage: TokenBudgetUsage | None = None
+        if user is not None and agent_response.usage is not None:
+            await user_repo.add_tokens(user, agent_response.usage.total)
+            token_usage = TokenBudgetUsage(
+                tokens_used=user.tokens_used,
+                token_budget=settings.token_budget,
+                tokens_remaining=settings.token_budget - user.tokens_used,
+                window_resets_at=user.token_window_start + timedelta(hours=settings.token_window_hours),
+            )
+
         await db.commit()
 
         return SendMessageResponse(
             user_message=user_msg_response,
             assistant_message=MessageResponse.model_validate(assistant_msg),
+            token_usage=token_usage,
         )
     finally:
         if _user_id is not None:
             await _release_user(_user_id)
+        await _release_chat(_chat_id)
 
 
 @router.post("/memory", response_model=MessageResponse)

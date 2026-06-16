@@ -5,7 +5,7 @@ from anthropic import AsyncAnthropic
 
 from app.agent.base import AgentBackend
 from app.agent.exceptions import AgentAuthError, AgentProviderError, AgentRateLimitError, AgentTimeoutError
-from app.agent.schemas import AgentMessage, AgentResponse, ToolCall, ToolDefinition, Role
+from app.agent.schemas import AgentMessage, AgentResponse, TokenUsage, ToolCall, ToolDefinition, Role
 from app.config.settings import settings
 
 
@@ -78,9 +78,17 @@ class ClaudeBackend(AgentBackend):
             if block.type == "tool_use"
         ]
 
+        usage = None
+        if response.usage:
+            usage = TokenUsage(
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
+
         return AgentResponse(
             content=text,
             model=response.model,
             tool_calls=tool_calls,
+            usage=usage,
             raw=response,
         )

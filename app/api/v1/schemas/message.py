@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,9 +36,17 @@ class MessageResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class TokenBudgetUsage(BaseModel):
+    tokens_used: int
+    token_budget: int
+    tokens_remaining: int       # may be negative if last request exceeded the limit
+    window_resets_at: datetime  # when tokens_used resets to 0
+
+
 class SendMessageResponse(BaseModel):
     user_message: MessageResponse
     assistant_message: MessageResponse
+    token_usage: Optional[TokenBudgetUsage] = None
 
 
 class MemoryFlushRequest(BaseModel):

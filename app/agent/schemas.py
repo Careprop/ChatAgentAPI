@@ -35,9 +35,20 @@ class ToolCall:
 
 
 @dataclass(slots=True)
+class TokenUsage:
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def total(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(slots=True)
 class AgentResponse:
     content: str
     model: str
 
     tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: TokenUsage | None = None
     raw: Any = field(default=None, repr=False)
