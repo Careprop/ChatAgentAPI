@@ -4,7 +4,7 @@
 
 Все запросы требуют заголовок `X-API-Key: <ваш ключ>`. Значение задаётся переменной `API_KEY`. При неверном ключе — `401`.
 
-Rate limiting (по IP): `POST /messages` — 60 req/мин, `POST /memory` — 300/мин, `POST /chat` и `POST /users` — 60/мин. Дополнительно: `POST /messages` — 60 req/мин на чат суммарно со всех IP (защита от распределённого спама на один чат).
+Rate limiting (по IP): `POST /messages` — 60 req/мин, `POST /memory` — 300/мин, `POST /chat` и `POST /users` — 60/мин, `DELETE /chat` — 30/мин, `GET /messages` — 120/мин, `POST /memory/flush` — 60/мин. Дополнительно: `POST /messages` — 60 req/мин на чат суммарно со всех IP.
 
 ---
 

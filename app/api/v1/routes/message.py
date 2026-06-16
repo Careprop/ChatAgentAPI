@@ -515,7 +515,10 @@ async def add_memory_message(
 
 
 @router.post("/memory/flush", response_model=MemoryFlushResponse)
+@limiter.limit("60/minute")
 async def flush_memory_chain(
+    request: Request,
+    response: Response,
     chat_external_id: uuid.UUID,
     payload: MemoryFlushRequest,
     db: AsyncSession = Depends(get_db),
@@ -554,7 +557,10 @@ async def flush_memory_chain(
 
 
 @router.get("", response_model=list[MessageResponse])
+@limiter.limit("120/minute")
 async def list_messages(
+    request: Request,
+    response: Response,
     chat_external_id: uuid.UUID,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before_sequence: Annotated[int | None, Query(ge=1)] = None,

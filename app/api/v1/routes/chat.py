@@ -59,7 +59,10 @@ async def get_chat(
 
 
 @router.delete("/{external_id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_chat(
+    request: Request,
+    response: Response,
     external_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),
