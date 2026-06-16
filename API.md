@@ -162,6 +162,7 @@ GET /chat?external_key=tg:123456789  # [] если не существует, [c
 | `semantic_context` | bool | `true` | Включить Layer 3 (семантический поиск) |
 | `cross_chat_context` | bool | `true` | Включить семантику из других чатов (в рамках Layer 3) |
 | `metadata` | object | `null` | Произвольные метаданные JSONB, например `{"telegram_message_id": 123}` |
+| `debug` | bool | `false` | Вернуть `debug_context` с содержимым всех слоёв контекста, переданных агенту |
 
 **Ответ `200`:**
 
@@ -193,6 +194,42 @@ GET /chat?external_key=tg:123456789  # [] если не существует, [c
 ```
 
 `token_usage` — `null` если у пользователя нет бюджета или `user_id` не передан. `tokens_remaining` может быть отрицательным, если последний запрос превысил остаток (soft limit — запрос пропускается, но последующие блокируются).
+
+Если `debug: true`, ответ содержит дополнительное поле `debug_context`:
+
+```json
+{
+  "debug_context": {
+    "layer1_direct_history": [
+      { "role": "user", "content": "Привет", "sequence": 1 },
+      { "role": "assistant", "content": "Здравствуй!", "sequence": 2 }
+    ],
+    "layer2_open_chains": [
+      {
+        "participant": "Анна",
+        "messages": [
+          { "role": "user", "content": "...", "sequence": 5 }
+        ]
+      }
+    ],
+    "layer3_facts": [
+      { "role": "assistant", "content": "Пользователь говорит по-русски", "sequence": 3 }
+    ],
+    "layer3_same_chat_memories": [],
+    "layer3_cross_chat_memories": []
+  }
+}
+```
+
+| Поле | Описание |
+|---|---|
+| `layer1_direct_history` | Прямые обращения к агенту (Layer 1) — то, что идёт в `messages[]` агенту |
+| `layer2_open_chains` | Открытые цепочки от других участников (Layer 2) |
+| `layer3_facts` | Факты о пользователе, найденные семантическим поиском (Layer 3) |
+| `layer3_same_chat_memories` | Релевантные воспоминания из текущего чата (Layer 3) |
+| `layer3_cross_chat_memories` | Релевантные воспоминания из других чатов (Layer 3) |
+
+`debug_context: null` когда `debug: false` (по умолчанию). В production передавать `debug: true` не рекомендуется — раскрывает внутренний контекст агента.
 
 ---
 

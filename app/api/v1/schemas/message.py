@@ -15,6 +15,7 @@ class SendMessageRequest(BaseModel):
     semantic_context: bool = True
     cross_chat_context: bool = True
     metadata: dict[str, Any] | None = None
+    debug: bool = False
 
 
 class AddMemoryRequest(BaseModel):
@@ -43,10 +44,30 @@ class TokenBudgetUsage(BaseModel):
     window_resets_at: datetime  # when tokens_used resets to 0
 
 
+class DebugMessage(BaseModel):
+    role: str
+    content: str
+    sequence: int
+
+
+class DebugChain(BaseModel):
+    participant: str | None
+    messages: list[DebugMessage]
+
+
+class DebugContext(BaseModel):
+    layer1_direct_history: list[DebugMessage]
+    layer2_open_chains: list[DebugChain]
+    layer3_facts: list[DebugMessage]
+    layer3_same_chat_memories: list[DebugMessage]
+    layer3_cross_chat_memories: list[DebugMessage]
+
+
 class SendMessageResponse(BaseModel):
     user_message: MessageResponse
     assistant_message: MessageResponse
     token_usage: Optional[TokenBudgetUsage] = None
+    debug_context: Optional[DebugContext] = None
 
 
 class MemoryFlushRequest(BaseModel):

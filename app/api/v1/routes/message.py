@@ -20,6 +20,9 @@ from app.api.v1.dependencies.embedding import get_embedding_backend, get_embeddi
 from app.api.v1.dependencies.rate_limit import limiter
 from app.api.v1.schemas.message import (
     AddMemoryRequest,
+    DebugChain,
+    DebugContext,
+    DebugMessage,
     MemoryFlushRequest,
     MemoryFlushResponse,
     MessageResponse,
@@ -398,6 +401,38 @@ async def send_message(
             )
         memory_block = _format_memory_block(facts, same_chat_memories, cross_chat_memories)
 
+        # --- Debug snapshot: capture layer contents before agent call ---
+        debug_context: DebugContext | None = None
+        if payload.debug:
+            debug_context = DebugContext(
+                layer1_direct_history=[
+                    DebugMessage(role=m.role, content=m.content, sequence=m.sequence)
+                    for m in prior_direct
+                ],
+                layer2_open_chains=[
+                    DebugChain(
+                        participant=(c.user.display_name if c.user else None),
+                        messages=[
+                            DebugMessage(role=m.role, content=m.content, sequence=m.sequence)
+                            for m in c.messages
+                        ],
+                    )
+                    for c in all_open_chains
+                ],
+                layer3_facts=[
+                    DebugMessage(role=m.role, content=m.content, sequence=m.sequence)
+                    for m in facts
+                ],
+                layer3_same_chat_memories=[
+                    DebugMessage(role=m.role, content=m.content, sequence=m.sequence)
+                    for m in same_chat_memories
+                ],
+                layer3_cross_chat_memories=[
+                    DebugMessage(role=m.role, content=m.content, sequence=m.sequence)
+                    for m in cross_chat_memories
+                ],
+            )
+
         # --- Transaction 1: commit user message so concurrent requests see it ---
         user_msg = await message_repo.create(
             _chat_id, Role.USER, payload.content,
@@ -454,6 +489,7 @@ async def send_message(
             user_message=user_msg_response,
             assistant_message=MessageResponse.model_validate(assistant_msg),
             token_usage=token_usage,
+            debug_context=debug_context,
         )
     finally:
         if _user_id is not None:
