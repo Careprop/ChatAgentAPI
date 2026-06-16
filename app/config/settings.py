@@ -22,8 +22,6 @@ class Settings(BaseSettings):
 
     # Max simultaneous in-flight send_message requests per chat
     max_chat_concurrent: int = 5
-    # Per-user token budget: max tokens per rolling window
-    token_budget: int = 10_000
     # Rolling window duration for per-user token budget (hours)
     token_window_hours: int = 4
 
